@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "allscan"
+version = "1.0.0"
+description = "Modular security recon / scanning tool with a terminal UI, for authorized testing."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["security", "recon", "scanner", "pentest", "tui", "authorized-testing"]
+dependencies = [
+    "rich>=13.7",
+    "textual>=0.58",
+    "requests>=2.31",
+    "dnspython>=2.4",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+allscan = "allscan.main:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["allscan*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

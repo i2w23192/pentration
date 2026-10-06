@@ -1,0 +1,45 @@
+# allscan configuration (copy to config.yaml, or pass with --config)
+# Every key is optional; omitted keys fall back to built-in defaults.
+# CLI flags and the TUI settings screen override anything set here.
+
+# Concurrency / politeness --------------------------------------------------
+threads: 20            # concurrent workers for DNS/port/web tasks
+rate_limit: 10.0       # global cap on requests/second against the target (0 = unlimited)
+timeout: 8.0           # per-network-operation timeout, seconds
+
+# Port scanning -------------------------------------------------------------
+full_ports: false      # true -> scan all 65535 ports (slow)
+skip_nmap: false       # true -> never call nmap; use the built-in connect scanner
+os_detection: false    # nmap -O (requires root/Administrator)
+
+# Modules to run by default (TUI/CLI can narrow this) -----------------------
+modules:
+  - recon              # subdomain & asset discovery
+  - scan               # port/service scan
+  - web                # web enumeration & content discovery
+  - headers            # HTML source + security header + TLS analysis
+  - vulns              # informational CVE correlation
+
+# Output --------------------------------------------------------------------
+output_dir: allscan-results   # JSON/MD/HTML reports + audit.log land here
+follow_redirects: true
+verify_tls: false      # recon routinely hits self-signed hosts; off by default
+
+# Wordlists (null -> use the small built-in lists) --------------------------
+wordlist_subdomains: null     # e.g. /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+wordlist_web: null            # e.g. /usr/share/seclists/Discovery/Web-Content/common.txt
+max_subdomains_bruteforce: 2000
+
+# DNS -----------------------------------------------------------------------
+dns_resolvers:
+  - 1.1.1.1
+  - 8.8.8.8
+  - 9.9.9.9
+
+# CVE correlation -----------------------------------------------------------
+# An NVD API key raises your rate limit from ~5 to ~50 requests/30s.
+# Request one free at https://nvd.nist.gov/developers/request-an-api-key
+nvd_api_key: null
+
+# Identification ------------------------------------------------------------
+user_agent: "allscan/1.0 (authorized security testing)"
