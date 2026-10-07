@@ -67,6 +67,9 @@ allscan example.com     # pre-fills the target field
 Mirror every TUI option as a flag. Authorization must be confirmed explicitly:
 
 ```bash
+# run everything (equivalent to the TUI's Allscan option):
+allscan example.com --i-have-authorization --all
+
 allscan example.com --i-have-authorization \
     --modules recon,scan,web,headers,vulns \
     --threads 20 --rate-limit 10 \
@@ -91,6 +94,7 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | Flag | Meaning |
 | --- | --- |
 | `--domain` / `--ip` / positional | Target (domain or IP) |
+| `--all` | Run every module (recon→scan→web→headers→vulns) with defaults |
 | `--modules a,b,c` | Which modules to run (default: all) |
 | `--full-ports` | Scan all 65535 ports |
 | `--skip-nmap` | Use the built-in scanner instead of nmap |
@@ -116,20 +120,29 @@ The TUI walks through a short flow; all screens work with arrow keys, `Tab`,
 
 **1. Welcome / target entry** — enter a domain or IP and tick the required
 *"I have authorization to test this target"* box. The scan cannot start until
-both are valid.
+both are valid. Press **`A`** (or the **Allscan (run everything)** button) to
+confirm target + authorization once and run *all* modules back-to-back with
+default settings — skipping the checklist and settings screens. This is the
+menu-driven equivalent of the `--all` CLI flag.
 
 ```
 ╭─ allscan — security recon for authorized testing ─────────────────────────╮
 │  Scanning systems without explicit authorization may be illegal.          │
+│  [A] Allscan (run everything)   [P] Past scans   [Esc] Quit               │
 │  ───────────────────────────────────────────────────────────────────     │
 │  Target (domain or IP):                                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
 │  │ example.com                                                         │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 │  [x] I have authorization to test this target                            │
-│   ( Configure & Scan → )  ( Past scans )  ( Quit )                       │
+│   ( ▶ Allscan (run everything) )  ( Configure & Scan → )  ( Past )  ( Quit )│
 ╰───────────────────────────────────────────────────────────────────────────╯
 ```
+
+The **Allscan** run chains Subdomain Discovery → Port/Service Scan → Web
+Enumeration → HTML/Header Analysis → CVE Correlation automatically, shows the
+same live per-module status + findings counter + activity log, and ends on the
+same results screen with JSON/Markdown/HTML export.
 
 **2. Module checklist** — a `SelectionList`: ↑/↓ to move, `Space` to toggle,
 `a` = all, `n` = none.

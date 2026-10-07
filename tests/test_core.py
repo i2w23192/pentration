@@ -242,3 +242,53 @@ def test_config_overrides_skip_none():
     out = cfg.apply_overrides(threads=None, rate_limit=99.0)
     assert out.threads == cfg.threads  # None left untouched
     assert out.rate_limit == 99.0
+
+
+# --------------------------------------------------------------------------- #
+# Allscan "run everything" entry point
+# --------------------------------------------------------------------------- #
+
+
+def test_cli_all_flag_forces_full_chain():
+    from allscan.engine import MODULE_ORDER
+    from allscan.main import build_parser, config_from_args
+
+    # --all overrides a narrower --modules
+    args = build_parser().parse_args(["example.test", "--all", "--modules", "web"])
+    assert args.run_all is True
+    assert config_from_args(args).modules == list(MODULE_ORDER)
+
+
+def test_tui_allscan_runs_all_modules_and_skips_config():
+    """Pressing Allscan confirms target+auth once then jumps straight to the
+    live scan with every module selected, bypassing checklist + settings."""
+    import asyncio
+
+    from allscan.engine import MODULE_ORDER
+    from allscan.tui import AllscanApp, ScanScreen, WelcomeScreen
+
+    async def drive():
+        # start with a deliberately narrow module set to prove Allscan overrides it
+        cfg = Config(modules=["web"])
+        app = AllscanApp(initial_target="example.test", config=cfg)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            # without authorization, Allscan must be blocked
+            screen.query_one("#auth-check").value = False
+            screen.action_allscan()
+            await pilot.pause()
+            assert isinstance(app.screen, WelcomeScreen)
+            # authorize -> Allscan jumps straight to the scan with all modules
+            screen.query_one("#auth-check").value = True
+            await pilot.pause()
+            screen.action_allscan()
+            await pilot.pause()
+            assert isinstance(app.screen, ScanScreen)
+            assert app.config.modules == list(MODULE_ORDER)
+            assert app.target == "example.test"
+            # cancel immediately so no real network scan proceeds
+            app.screen.action_stop()
+            await pilot.pause()
+
+    asyncio.run(drive())

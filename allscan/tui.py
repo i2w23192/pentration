@@ -70,6 +70,7 @@ SEVERITY_COLOR = {
 class WelcomeScreen(Screen):
     BINDINGS = [
         Binding("escape", "app.quit", "Quit"),
+        Binding("a", "allscan", "Allscan (run everything)"),
         Binding("p", "past_scans", "Past scans"),
     ]
 
@@ -83,6 +84,13 @@ class WelcomeScreen(Screen):
                 "illegal. Confirm you have permission before running.[/dim]",
                 id="subtitle",
             )
+            # quick-action bar: [A] runs every module back-to-back with defaults,
+            # the menu-driven equivalent of the --all CLI flag.
+            yield Static(
+                "[b][A][/b] Allscan (run everything)   "
+                "[b][P][/b] Past scans   [b][Esc][/b] Quit",
+                id="menu-bar",
+            )
             yield Rule()
             yield Label("Target (domain or IP):")
             yield Input(placeholder="example.com", id="target-input")
@@ -92,6 +100,8 @@ class WelcomeScreen(Screen):
                 id="auth-check",
             )
             with Horizontal(id="welcome-buttons"):
+                yield Button("▶ Allscan (run everything)", variant="success",
+                             id="allscan-btn")
                 yield Button("Configure & Scan →", variant="primary", id="start-btn")
                 yield Button("Past scans", id="past-btn")
                 yield Button("Quit", variant="error", id="quit-btn")
@@ -104,6 +114,9 @@ class WelcomeScreen(Screen):
     def action_past_scans(self) -> None:
         self.app.push_screen(PastScansScreen())
 
+    def action_allscan(self) -> None:
+        self._run_everything()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "quit-btn":
             self.app.exit()
@@ -111,24 +124,51 @@ class WelcomeScreen(Screen):
             self.action_past_scans()
         elif event.button.id == "start-btn":
             self._start()
+        elif event.button.id == "allscan-btn":
+            self._run_everything()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Typing "allscan" as the target is treated as the run-everything
+        # trigger (needs a real target, so prompt for one); otherwise start
+        # the normal configure flow.
+        if event.value.strip().lower() == "allscan":
+            self.query_one("#target-input", Input).value = ""
+            self.query_one("#target-error", Static).update(
+                "[yellow]Allscan selected — enter a target above, then press "
+                "[b]A[/b] or the Allscan button.[/yellow]"
+            )
+            return
         self._start()
 
-    def _start(self) -> None:
+    def _confirm_target(self) -> Optional[str]:
+        """Validate target + authorization; return normalized target or None."""
         target_raw = self.query_one("#target-input", Input).value.strip()
         error = self.query_one("#target-error", Static)
         ok, msg = validate_target(target_raw)
         if not ok:
             error.update(f"[red]{msg}[/red]")
-            return
+            return None
         if not self.query_one("#auth-check", Checkbox).value:
             error.update("[red]You must confirm authorization before scanning.[/red]")
-            return
+            return None
         error.update("")
         self.app.target = msg  # type: ignore[attr-defined]
         self.app.authorized = True  # type: ignore[attr-defined]
+        return msg
+
+    def _start(self) -> None:
+        if self._confirm_target() is None:
+            return
         self.app.push_screen(ModulesScreen())
+
+    def _run_everything(self) -> None:
+        """Allscan: confirm target+auth once, then chain all modules with
+        default settings straight to the live scan (skips the checklist and
+        settings screens). Same behavior as the --all CLI flag."""
+        if self._confirm_target() is None:
+            return
+        self.app.config.modules = list(MODULE_ORDER)  # type: ignore[attr-defined]
+        self.app.push_screen(ScanScreen())
 
 
 # --------------------------------------------------------------------------- #
@@ -294,24 +334,44 @@ class ScanScreen(Screen):
         self.start_scan()
 
     # ------------------------------------------------------------------ #
+    # These three run from a background worker thread via call_from_thread,
+    # so a late callback can arrive after the scan finished and the screen was
+    # switched out (e.g. on Ctrl+C / Stop). They are best-effort display
+    # updates — swallow errors and bail if the screen is no longer mounted.
     def _update_counter(self) -> None:
-        self.query_one("#counter-panel", Static).update(
-            f"\n [b]{self._count}[/b]\n findings\n\n"
-            f" [dim]{'cancelling…' if self._stopped else 'running'}[/dim]"
-        )
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#counter-panel", Static).update(
+                f"\n [b]{self._count}[/b]\n findings\n\n"
+                f" [dim]{'cancelling…' if self._stopped else 'running'}[/dim]"
+            )
+        except Exception:
+            pass
 
     def _set_status(self, module: str, status: str) -> None:
+        if not self.is_mounted:
+            return
         icons = {"queued": "…", "running": "▶", "done": "✓",
                  "error": "✗", "cancelled": "⧉"}
-        table = self.query_one("#module-status", DataTable)
         key = self._rows.get(module)
-        if key is not None:
+        if key is None:
+            return
+        try:
+            table = self.query_one("#module-status", DataTable)
             table.update_cell(key, "Status", f"{icons.get(status, '?')} {status}")
+        except Exception:
+            pass
 
     def _log(self, module: str, message: str) -> None:
-        self.query_one("#activity-log", RichLog).write(
-            f"[cyan]{module:<8}[/cyan] {message}"
-        )
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#activity-log", RichLog).write(
+                f"[cyan]{module:<8}[/cyan] {message}"
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     @work(thread=True, exclusive=True)
@@ -623,6 +683,10 @@ class AllscanApp(App):
     }
     #title { text-style: bold; color: $accent; }
     #subtitle { margin-bottom: 1; }
+    #menu-bar {
+        margin-bottom: 1; padding: 0 1; color: $text;
+        background: $boost; border: round $success;
+    }
     #target-input { margin: 1 0; }
     #target-error { color: red; }
     #welcome-buttons, #modules-buttons, #settings-buttons { margin-top: 1; }
