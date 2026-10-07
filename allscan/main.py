@@ -77,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Local ExploitDB files_exploits.csv to resolve EDB-ID references")
     p.add_argument("--pdf", action="store_true",
                    help="Also write a PDF report (requires reportlab)")
+    p.add_argument("--criticality", metavar="BAND",
+                   help="Default asset criticality for risk scoring: low|medium|high|critical")
+    p.add_argument("--asset-criticality", metavar="MAP",
+                   help="Per-asset criticality, e.g. 'api.x=critical,blog.x=low'")
+    p.add_argument("--suppress", metavar="FPS",
+                   help="Comma list of finding fingerprints to mark false-positive")
     # Skip flags — fold into the full chain / Allscan run.
     skip = p.add_argument_group("skip modules (use with the full chain / --all)")
     skip.add_argument("--skip", metavar="MODULES",
@@ -167,6 +173,15 @@ def config_from_args(args) -> Config:
                    if getattr(args, "cve_source", None) else None)
     integrations = ([s.strip().lower() for s in args.integrations.split(",") if s.strip()]
                     if getattr(args, "integrations", None) else None)
+    asset_crit = None
+    if getattr(args, "asset_criticality", None):
+        asset_crit = {}
+        for pair in args.asset_criticality.split(","):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                asset_crit[k.strip()] = v.strip().lower()
+    suppress = ([s.strip() for s in args.suppress.split(",") if s.strip()]
+                if getattr(args, "suppress", None) else None)
     return base.apply_overrides(
         threads=args.threads,
         rate_limit=args.rate_limit,
@@ -189,6 +204,9 @@ def config_from_args(args) -> Config:
         exploitdb_csv=getattr(args, "exploitdb_csv", None),
         pdf=True if getattr(args, "pdf", False) else None,
         integrations=integrations,
+        default_criticality=getattr(args, "criticality", None),
+        asset_criticality=asset_crit,
+        suppress_fingerprints=suppress,
     )
 
 

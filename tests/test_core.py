@@ -885,6 +885,68 @@ def test_report_has_risk_matrix_and_mapping_sections():
     assert "risk matrix" in html and "T1190" in html and "attack-surface topology" in html
 
 
+# --------------------------------------------------------------------------- #
+# phase 4 completion: CPE, vuln-age, business-impact scoring, FP suppression
+# --------------------------------------------------------------------------- #
+
+
+def test_vulnintel_cpe_age_and_scoring_helpers():
+    from allscan.vulnintel import make_cpe, cve_age_years, risk_score
+
+    assert make_cpe("nginx", "1.18.0") == "cpe:2.3:a:nginx:nginx:1.18.0:*:*:*:*:*:*:*"
+    assert make_cpe("Apache HTTP", "") .endswith(":*:*:*:*:*:*:*")
+    assert cve_age_years("CVE-2015-1000") >= 9
+    assert cve_age_years("not-a-cve") is None
+    assert risk_score("high", "high", "critical") == (100, "Critical")
+    assert risk_score("low", "low", "low")[1] == "Low"
+
+
+def test_vulnintel_module_scores_and_suppresses():
+    from allscan.vulnintel import VulnIntelModule
+    from allscan.platform import fingerprint
+
+    result = ScanResult(target="api.corp.test")
+    cve = Finding(category=Category.CVE, title="CVE-2021-44228 log4j", severity=Severity.HIGH,
+                  target="api.corp.test",
+                  evidence={"cve_id": "CVE-2021-44228", "product": "log4j",
+                            "version": "2.14", "kev": True})
+    noise = Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.LOW)
+    result.add(cve)
+    result.add(noise)
+
+    ctx = _make_ctx(target="api.corp.test",
+                    state={"_result": result})
+    ctx.config.asset_criticality = {"api.corp.test": "critical"}
+    ctx.config.suppress_fingerprints = [fingerprint(noise)]
+    out = VulnIntelModule().run(ctx)
+
+    # CPE + age annotated on the CVE
+    assert cve.evidence["cpe"].startswith("cpe:2.3:a:log4j:log4j:2.14")
+    assert cve.evidence["age_years"] >= 3
+    # scored with critical asset + KEV => high score, and present in top risks
+    assert cve.evidence["risk_score"] >= 60 and cve.evidence["risk_band"] == "Critical"
+    top = ctx.state["top_risks"]
+    assert any(t["fingerprint"] == fingerprint(cve) for t in top)
+    # the suppressed finding is marked and excluded from top risks
+    assert noise.evidence.get("suppressed") is True
+    assert all(t["fingerprint"] != fingerprint(noise) for t in top)
+    # aging high-risk KEV CVE produces its own flag
+    assert any("Aging high-risk" in f.title for f in out)
+
+
+def test_report_top_risks_section():
+    from allscan import report
+
+    r = ScanResult(target="x.test")
+    r.add(Finding(category=Category.CVE, title="CVE-1", severity=Severity.HIGH))
+    r.meta = {"top_risks": [{"fingerprint": "abc", "title": "CVE-1 big",
+                             "category": "cves", "severity": "high",
+                             "likelihood": "high", "criticality": "critical",
+                             "risk_score": 100, "risk_band": "Critical", "target": "x.test"}]}
+    assert "Top Risks" in report.to_markdown(r)
+    assert "top risks" in report.to_html(r)
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""

@@ -42,6 +42,7 @@ MODULE_ORDER = [
     "active",        # active probing (detection-only; gated behind --active)
     "vulns",         # informational CVE correlation + misconfigs
     "exploitrefs",   # exploit REFERENCES + KEV/EPSS enrichment (no payloads)
+    "vulnintel",     # CPE, vuln-age, business-impact risk scoring, FP suppression
     "surface",       # attack-surface + infra-relationship roll-up
     "threatmodel",   # ATT&CK / STRIDE / compliance mapping + risk matrix
     "compliance",    # baseline pass/fail checklist roll-up (must be last)
@@ -147,6 +148,7 @@ class Engine:
                 "surface": shared_state.get("surface", {}),
                 "risk_matrix": shared_state.get("risk_matrix", {}),
                 "threatmodel": shared_state.get("threatmodel", {}),
+                "top_risks": shared_state.get("top_risks", []),
             }
             audit.record("scan_end", self.target, partial=self.result.partial,
                          findings=len(self.result.findings))

@@ -92,6 +92,7 @@ def get_registry() -> dict[str, "Module"]:
     from allscan.active import ActiveModule
     from allscan.vulns import VulnsModule
     from allscan.exploitrefs import ExploitRefsModule
+    from allscan.vulnintel import VulnIntelModule
     from allscan.surface import SurfaceModule
     from allscan.threatmodel import ThreatModelModule
     from allscan.compliance import ComplianceModule
@@ -115,6 +116,7 @@ def get_registry() -> dict[str, "Module"]:
         ActiveModule(),
         VulnsModule(),
         ExploitRefsModule(),
+        VulnIntelModule(),
         SurfaceModule(),
         ThreatModelModule(),
         ComplianceModule(),

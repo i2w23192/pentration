@@ -140,6 +140,17 @@ def to_markdown(result: ScanResult) -> str:
             )
         lines.append("")
 
+    top = (result.meta or {}).get("top_risks") or []
+    if top:
+        lines.append("## Top Risks (business impact)")
+        lines.append("")
+        lines.append("| Score | Band | Sev | Likelihood | Asset | Finding |")
+        lines.append("| ---: | --- | --- | --- | --- | --- |")
+        for r in top[:15]:
+            lines.append(f"| {r['risk_score']} | {r['risk_band']} | {r['severity']} "
+                         f"| {r['likelihood']} | {r['criticality']} | {r['title'][:50]} |")
+        lines.append("")
+
     matrix = (result.meta or {}).get("risk_matrix") or {}
     if matrix:
         lines.append("## Risk Matrix (severity × likelihood)")
@@ -368,6 +379,24 @@ def to_html(result: ScanResult) -> str:
             + "</tbody></table></section>"
         )
 
+    # top risks by business impact
+    top = (result.meta or {}).get("top_risks") or []
+    toprisk_html = ""
+    if top:
+        band_color = {"Critical": "#e5484d", "High": "#f5a623",
+                      "Medium": "#d4a700", "Low": "#4a9eff"}
+        rows_html = "".join(
+            f"<tr><td style='text-align:right'><b>{r['risk_score']}</b></td>"
+            f"<td style='color:{band_color.get(r['risk_band'], '#8b949e')}'>{esc(r['risk_band'])}</td>"
+            f"<td>{esc(r['severity'])}</td><td>{esc(r['likelihood'])}</td>"
+            f"<td>{esc(r['criticality'])}</td><td>{esc(r['title'][:70])}</td></tr>"
+            for r in top[:15])
+        toprisk_html = (
+            '<section><h2>top risks <small>(business impact)</small></h2>'
+            '<table class="checklist"><thead><tr><th>Score</th><th>Band</th><th>Sev</th>'
+            '<th>Likelihood</th><th>Asset</th><th>Finding</th></tr></thead><tbody>'
+            + rows_html + "</tbody></table></section>")
+
     # risk matrix (severity x likelihood)
     matrix = (result.meta or {}).get("risk_matrix") or {}
     risk_html = ""
@@ -476,6 +505,7 @@ def to_html(result: ScanResult) -> str:
   {partial}
   <div class="pills">{pills}</div>
   {compliance_html}
+  {toprisk_html}
   {risk_html}
   {topo_html}
   {mapping_html}

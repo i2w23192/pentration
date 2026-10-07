@@ -32,6 +32,7 @@ modules:
   - active             # active probing (detection-only; no-op unless `active: true`)
   - vulns              # informational CVE correlation + misconfigs
   - exploitrefs        # exploit references + KEV/EPSS enrichment (no payloads)
+  - vulnintel          # CPE, vuln-age, business-impact scoring, FP suppression
   - surface            # attack-surface + infra-relationship roll-up
   - threatmodel        # ATT&CK / STRIDE / compliance mapping + risk matrix
   - compliance         # baseline pass/fail checklist roll-up (runs last)
@@ -81,6 +82,11 @@ nvd_api_key: null
 
 # CVE data sources to query (any of: nvd, circl). Results are merged + deduped.
 cve_sources: [nvd, circl]
+
+# Business-impact risk scoring (severity x likelihood x asset criticality) ---
+default_criticality: medium   # when an asset isn't listed below
+asset_criticality: {}         # e.g. {api.example.com: critical, blog.example.com: low}
+suppress_fingerprints: []     # finding fingerprints to mark false-positive (see `findings list`)
 
 # Exploit-reference enrichment -----------------------------------------------
 # Optional local ExploitDB checkout CSV to resolve concrete EDB-IDs offline.

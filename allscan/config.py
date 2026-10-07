@@ -35,8 +35,8 @@ DEFAULTS: dict[str, Any] = {
     "modules": [
         "netdiscover", "recon", "dnsx", "whois", "asn", "certs", "email",
         "scan", "web", "fingerprint", "headers", "tls", "cloud", "waf",
-        "integrations", "active", "vulns", "exploitrefs", "surface",
-        "threatmodel", "compliance",
+        "integrations", "active", "vulns", "exploitrefs", "vulnintel",
+        "surface", "threatmodel", "compliance",
     ],
     "integrations": [],           # external scanner wrappers to enable (opt-in)
     "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
@@ -57,6 +57,10 @@ DEFAULTS: dict[str, Any] = {
     "nvd_api_key": None,          # optional NVD API key for higher rate limits
     "cve_sources": ["nvd", "circl"],  # CVE data sources to query (nvd, circl)
     "exploitdb_csv": None,        # optional local ExploitDB files_exploits.csv for EDB-ID refs
+    # --- vuln intelligence (business-impact scoring + FP management) ----
+    "default_criticality": "medium",   # asset criticality when unspecified
+    "asset_criticality": {},      # {host_substring: low|medium|high|critical}
+    "suppress_fingerprints": [],  # finding fingerprints to mark as false-positive
     "pdf": False,                 # also emit a ReportLab PDF report
     "projects_dir": "allscan-projects",  # engagement/project store location
     "dns_resolvers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
@@ -84,6 +88,7 @@ MODULE_LABELS = {
     "active": "Active Probing (detection)",
     "vulns": "CVE Correlation",
     "exploitrefs": "Exploit-Reference Enrichment",
+    "vulnintel": "Vuln Intelligence & Risk Scoring",
     "surface": "Attack-Surface Mapping",
     "threatmodel": "Threat Model & Compliance Mapping",
     "compliance": "Compliance Checklist",
@@ -106,6 +111,9 @@ class Config:
     nvd_api_key: Optional[str] = DEFAULTS["nvd_api_key"]
     cve_sources: list[str] = field(default_factory=lambda: list(DEFAULTS["cve_sources"]))
     exploitdb_csv: Optional[str] = DEFAULTS["exploitdb_csv"]
+    default_criticality: str = DEFAULTS["default_criticality"]
+    asset_criticality: dict = field(default_factory=lambda: dict(DEFAULTS["asset_criticality"]))
+    suppress_fingerprints: list[str] = field(default_factory=lambda: list(DEFAULTS["suppress_fingerprints"]))
     pdf: bool = DEFAULTS["pdf"]
     projects_dir: str = DEFAULTS["projects_dir"]
     dns_resolvers: list[str] = field(default_factory=lambda: list(DEFAULTS["dns_resolvers"]))
