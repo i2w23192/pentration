@@ -77,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Local ExploitDB files_exploits.csv to resolve EDB-ID references")
     p.add_argument("--pdf", action="store_true",
                    help="Also write a PDF report (requires reportlab)")
+    p.add_argument("--criticality", metavar="BAND",
+                   help="Default asset criticality for risk scoring: low|medium|high|critical")
+    p.add_argument("--asset-criticality", metavar="MAP",
+                   help="Per-asset criticality, e.g. 'api.x=critical,blog.x=low'")
+    p.add_argument("--suppress", metavar="FPS",
+                   help="Comma list of finding fingerprints to mark false-positive")
     # Skip flags — fold into the full chain / Allscan run.
     skip = p.add_argument_group("skip modules (use with the full chain / --all)")
     skip.add_argument("--skip", metavar="MODULES",
@@ -100,6 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Active-only worker cap (default 8)")
     active.add_argument("--active-stop-after-errors", type=int,
                         help="Auto-stop active probing after N consecutive errors (default 25)")
+    active.add_argument("--integrations", metavar="TOOLS",
+                        help="Comma list of external scanners to wrap if installed: "
+                             "subfinder,amass,httpx (passive), nuclei,nikto,sqlmap,masscan "
+                             "(active — also need --active). Detection phase only.")
 
     p.add_argument(
         "--i-have-authorization",
@@ -108,6 +118,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--no-tui", action="store_true", help="Force headless mode even with a TTY")
     p.add_argument("--json-only", action="store_true", help="Write only JSON (skip md/html)")
+    p.add_argument("--project", metavar="NAME",
+                   help="Run under an engagement project: applies its scope, enforces "
+                        "its testing window for active work, ingests findings, saves the run")
+    p.add_argument("--projects-dir", help="Engagement/project store directory")
 
     p.epilog = (
         "subcommands:\n"
@@ -157,6 +171,17 @@ def config_from_args(args) -> Config:
                   if getattr(args, "scope_deny", None) else None)
     cve_sources = ([s.strip().lower() for s in args.cve_source.split(",") if s.strip()]
                    if getattr(args, "cve_source", None) else None)
+    integrations = ([s.strip().lower() for s in args.integrations.split(",") if s.strip()]
+                    if getattr(args, "integrations", None) else None)
+    asset_crit = None
+    if getattr(args, "asset_criticality", None):
+        asset_crit = {}
+        for pair in args.asset_criticality.split(","):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                asset_crit[k.strip()] = v.strip().lower()
+    suppress = ([s.strip() for s in args.suppress.split(",") if s.strip()]
+                if getattr(args, "suppress", None) else None)
     return base.apply_overrides(
         threads=args.threads,
         rate_limit=args.rate_limit,
@@ -178,6 +203,10 @@ def config_from_args(args) -> Config:
         cve_sources=cve_sources,
         exploitdb_csv=getattr(args, "exploitdb_csv", None),
         pdf=True if getattr(args, "pdf", False) else None,
+        integrations=integrations,
+        default_criticality=getattr(args, "criticality", None),
+        asset_criticality=asset_crit,
+        suppress_fingerprints=suppress,
     )
 
 
@@ -309,6 +338,9 @@ def write_outputs(result: ScanResult, config: Config, json_only: bool) -> list[P
     if not json_only:
         paths.append(report.save_markdown(result, out))
         paths.append(report.save_html(result, out))
+        svg = report.save_svg(result, out)
+        if svg is not None:
+            paths.append(svg)
         if getattr(config, "pdf", False):
             try:
                 from allscan import report_pdf
@@ -423,6 +455,196 @@ def run_multi(targets: list[str], config: Config, json_only: bool) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# engagement / project subcommands (Phase 5)
+# --------------------------------------------------------------------------- #
+
+def _store(projects_dir: Optional[str]):
+    from allscan.platform import ProjectStore
+    return ProjectStore(projects_dir or DEFAULTS["projects_dir"])
+
+
+def cmd_project(argv: list[str]) -> int:
+    import argparse as _a
+    p = _a.ArgumentParser(prog="allscan project")
+    sub = p.add_subparsers(dest="sub", required=True)
+    c = sub.add_parser("create"); c.add_argument("name"); c.add_argument("--client", default="")
+    c.add_argument("--scope-allow"); c.add_argument("--scope-deny")
+    c.add_argument("--roe"); c.add_argument("--window-start"); c.add_argument("--window-end")
+    c.add_argument("--authorization"); c.add_argument("--projects-dir")
+    s = sub.add_parser("show"); s.add_argument("name"); s.add_argument("--projects-dir")
+    lst = sub.add_parser("list"); lst.add_argument("--projects-dir")
+    args = p.parse_args(argv)
+    store = _store(getattr(args, "projects_dir", None))
+
+    if args.sub == "list":
+        rows = store.list()
+        if not rows:
+            print("No projects.")
+            return 0
+        print(f"{'Project':<24} {'Client':<20} {'Runs':>5} {'Findings':>9}  Auth")
+        for r in rows:
+            print(f"{r['name']:<24} {r['client']:<20} {r['runs']:>5} {r['findings']:>9}  "
+                  f"{'yes' if r['authorized'] else 'NO'}")
+        return 0
+
+    if args.sub == "create":
+        if store.exists(args.name):
+            print(f"error: project '{args.name}' already exists.", file=sys.stderr)
+            return 2
+        proj = store.create(args.name, args.client)
+        if args.scope_allow or args.scope_deny:
+            proj.set_scope(
+                allow=[s.strip() for s in (args.scope_allow or "").split(",") if s.strip()] or None,
+                deny=[s.strip() for s in (args.scope_deny or "").split(",") if s.strip()] or None)
+        if args.roe:
+            text = Path(args.roe).read_text() if Path(args.roe).is_file() else args.roe
+            proj.set_roe(text)
+        if args.window_start or args.window_end:
+            proj.set_window(args.window_start, args.window_end)
+        if args.authorization:
+            try:
+                proj.add_authorization(args.authorization)
+            except FileNotFoundError:
+                print(f"error: authorization file not found: {args.authorization}", file=sys.stderr)
+                return 2
+        proj.save()
+        print(f"Created project '{args.name}'"
+              + (" (authorization on file)" if proj.has_authorization
+                 else " — WARNING: no authorization evidence stored yet"))
+        return 0
+
+    if args.sub == "show":
+        if not store.exists(args.name):
+            print(f"error: no such project '{args.name}'.", file=sys.stderr)
+            return 2
+        proj = store.load(args.name)
+        d = proj.data
+        print(f"Project: {d['name']}   Client: {d.get('client') or '—'}")
+        print(f"  Scope allow: {d['scope']['allow'] or '—'}")
+        print(f"  Scope deny : {d['scope']['deny'] or '—'}")
+        w = d.get("window") or {}
+        print(f"  Window     : {w.get('start') or '—'} .. {w.get('end') or '—'} "
+              f"(active now: {'yes' if proj.within_window() else 'NO'})")
+        print(f"  Authorized : {'yes' if proj.has_authorization else 'NO'} "
+              f"({len(d['authorization'])} file(s))")
+        print(f"  Evidence   : {len(d['evidence'])} item(s)")
+        print(f"  Runs       : {len(d['runs'])}")
+        by = proj.findings_by_status()
+        print(f"  Findings   : {len(d['findings'])} "
+              f"({', '.join(f'{k}={len(v)}' for k, v in by.items()) or '—'})")
+        return 0
+    return 0
+
+
+def cmd_evidence(argv: list[str]) -> int:
+    import argparse as _a
+    p = _a.ArgumentParser(prog="allscan evidence")
+    sub = p.add_subparsers(dest="sub", required=True)
+    a = sub.add_parser("add"); a.add_argument("name"); a.add_argument("file")
+    a.add_argument("--note", default=""); a.add_argument("--projects-dir")
+    lst = sub.add_parser("list"); lst.add_argument("name"); lst.add_argument("--projects-dir")
+    v = sub.add_parser("verify"); v.add_argument("name"); v.add_argument("--projects-dir")
+    args = p.parse_args(argv)
+    store = _store(getattr(args, "projects_dir", None))
+    if not store.exists(args.name):
+        print(f"error: no such project '{args.name}'.", file=sys.stderr)
+        return 2
+    proj = store.load(args.name)
+    if args.sub == "add":
+        try:
+            rec = proj.add_evidence(args.file, args.note)
+        except FileNotFoundError:
+            print(f"error: file not found: {args.file}", file=sys.stderr)
+            return 2
+        proj.save()
+        print(f"Stored {rec['id']}: {rec['name']}  sha256={rec['sha256']}  "
+              f"({rec['size']} bytes) by {rec['added_by']}")
+        return 0
+    if args.sub == "list":
+        for rec in proj.data["evidence"]:
+            print(f"{rec['id']}  {rec['name']:<30} {rec['sha256'][:16]}…  "
+                  f"{rec['size']:>8}B  {rec['added_by']}")
+        if not proj.data["evidence"]:
+            print("No evidence stored.")
+        return 0
+    if args.sub == "verify":
+        results = proj.verify_evidence(); proj.save()
+        for r in results:
+            print(f"{r['id']}  {r['name']:<30} {'OK' if r['intact'] else 'TAMPERED/MISSING'}")
+        return 0 if all(r["intact"] for r in results) else 1
+    return 0
+
+
+def cmd_findings(argv: list[str]) -> int:
+    import argparse as _a
+    p = _a.ArgumentParser(prog="allscan findings")
+    sub = p.add_subparsers(dest="sub", required=True)
+    lst = sub.add_parser("list"); lst.add_argument("name")
+    lst.add_argument("--status"); lst.add_argument("--projects-dir")
+    st = sub.add_parser("set-status"); st.add_argument("name")
+    st.add_argument("fingerprint"); st.add_argument("status")
+    st.add_argument("--note", default=""); st.add_argument("--projects-dir")
+    args = p.parse_args(argv)
+    store = _store(getattr(args, "projects_dir", None))
+    if not store.exists(args.name):
+        print(f"error: no such project '{args.name}'.", file=sys.stderr)
+        return 2
+    proj = store.load(args.name)
+    if args.sub == "list":
+        recs = list(proj.data["findings"].values())
+        if args.status:
+            recs = [r for r in recs if r["status"] == args.status]
+        recs.sort(key=lambda r: (r["status"], r["title"]))
+        print(f"{'Fingerprint':<18}{'Status':<15}{'Sev':<8}{'Category':<12}Title")
+        for r in recs:
+            print(f"{r['fingerprint']:<18}{r['status']:<15}{r['severity']:<8}"
+                  f"{r['category']:<12}{r['title'][:60]}")
+        if not recs:
+            print("(no findings)")
+        return 0
+    if args.sub == "set-status":
+        from allscan.platform import STATUSES
+        if args.status not in STATUSES:
+            print(f"error: status must be one of {', '.join(STATUSES)}", file=sys.stderr)
+            return 2
+        try:
+            proj.set_finding_status(args.fingerprint, args.status, args.note)
+        except KeyError:
+            print(f"error: no finding {args.fingerprint}", file=sys.stderr)
+            return 2
+        proj.save()
+        print(f"{args.fingerprint} -> {args.status}")
+        return 0
+    return 0
+
+
+def cmd_retest(argv: list[str]) -> int:
+    import argparse as _a
+    p = _a.ArgumentParser(prog="allscan retest")
+    p.add_argument("name")
+    p.add_argument("--run", help="Path to a run JSON to retest against the ledger")
+    p.add_argument("--projects-dir")
+    args = p.parse_args(argv)
+    store = _store(getattr(args, "projects_dir", None))
+    if not store.exists(args.name):
+        print(f"error: no such project '{args.name}'.", file=sys.stderr)
+        return 2
+    if not args.run:
+        print("error: provide --run RUN.json (a fresh scan to compare).", file=sys.stderr)
+        return 2
+    from allscan import report
+    proj = store.load(args.name)
+    result = report.load_json(Path(args.run))
+    rep = proj.retest(result, run_path=args.run)
+    proj.save()
+    c = rep["counts"]
+    print(f"Retest {rep['run_id']} for {rep['target']}:")
+    print(f"  fixed={c['fixed']}  not-fixed={c['not_fixed']}  "
+          f"regressions={c['regressions']}  new={c['new']}")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -432,12 +654,42 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_diff(build_diff_parser().parse_args(argv[1:]))
     if argv and argv[0] == "list":
         return cmd_list(build_list_parser().parse_args(argv[1:]))
+    if argv and argv[0] == "project":
+        return cmd_project(argv[1:])
+    if argv and argv[0] == "evidence":
+        return cmd_evidence(argv[1:])
+    if argv and argv[0] == "findings":
+        return cmd_findings(argv[1:])
+    if argv and argv[0] == "retest":
+        return cmd_retest(argv[1:])
 
     parser = build_parser()
     args = parser.parse_args(argv)
 
     target = resolve_target(args)
     config = config_from_args(args)
+
+    # Engagement project: apply its scope, enforce its window for active work.
+    project = None
+    if getattr(args, "project", None):
+        if getattr(args, "projects_dir", None):
+            config.projects_dir = args.projects_dir
+        store = _store(config.projects_dir)
+        if not store.exists(args.project):
+            print(f"error: no such project '{args.project}'. Create it with "
+                  f"'allscan project create {args.project}'.", file=sys.stderr)
+            return 2
+        project = store.load(args.project)
+        ps = project.data.get("scope", {})
+        config.scope_allow = list(dict.fromkeys(list(config.scope_allow) + ps.get("allow", [])))
+        config.scope_deny = list(dict.fromkeys(list(config.scope_deny) + ps.get("deny", [])))
+        if config.active:
+            if not project.has_authorization:
+                print("  ⚠  project has no stored authorization evidence.")
+            if not project.within_window():
+                print("  ⚠  outside the project testing window — DISABLING active "
+                      "probing for this run.")
+                config.active = False
 
     # Multi-target file mode (headless, scripting) — requires authorization.
     if getattr(args, "targets_file", None):
@@ -478,6 +730,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     result = run_headless(target, config)
     paths = write_outputs(result, config, args.json_only)
     print_summary(result, paths)
+    if project is not None:
+        info = project.ingest_run(result, run_path=str(paths[0]))
+        project.save()
+        print(f"\nProject '{project.name}': ingested {info['run_id']} "
+              f"({info['new']} new, {info['updated']} updated findings).")
     return 0
 
 

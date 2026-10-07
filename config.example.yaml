@@ -28,10 +28,13 @@ modules:
   - tls                # SSL/TLS deep audit: protocol matrix, chain, expiry
   - cloud              # exposed cloud buckets + metadata-endpoint references
   - waf                # WAF/CDN fingerprint + rate-limit observation
+  - integrations       # external scanner wrappers (no-op unless `integrations:` set)
   - active             # active probing (detection-only; no-op unless `active: true`)
   - vulns              # informational CVE correlation + misconfigs
   - exploitrefs        # exploit references + KEV/EPSS enrichment (no payloads)
+  - vulnintel          # CPE, vuln-age, business-impact scoring, FP suppression
   - surface            # attack-surface + infra-relationship roll-up
+  - threatmodel        # ATT&CK / STRIDE / compliance mapping + risk matrix
   - compliance         # baseline pass/fail checklist roll-up (runs last)
 
 # Network/host discovery ----------------------------------------------------
@@ -50,6 +53,11 @@ active_max_concurrency: 8     # active-only worker cap (also bounded by `threads
 active_max_urls: 25           # cap probed URLs per run
 active_max_params: 6          # cap probed parameters per URL
 active_stop_after_errors: 25  # auto-stop active probing after N consecutive request errors
+
+# External scanner integrations (opt-in; only run if the binary is installed).
+# Passive: subfinder, amass, httpx. Active (also need active: true): nuclei,
+# nikto, sqlmap (detection phase only), masscan. allscan never installs tools.
+integrations: []              # e.g. [subfinder, httpx, nuclei]
 
 # Output --------------------------------------------------------------------
 output_dir: allscan-results   # JSON/MD/HTML reports + audit.log land here
@@ -75,6 +83,11 @@ nvd_api_key: null
 # CVE data sources to query (any of: nvd, circl). Results are merged + deduped.
 cve_sources: [nvd, circl]
 
+# Business-impact risk scoring (severity x likelihood x asset criticality) ---
+default_criticality: medium   # when an asset isn't listed below
+asset_criticality: {}         # e.g. {api.example.com: critical, blog.example.com: low}
+suppress_fingerprints: []     # finding fingerprints to mark false-positive (see `findings list`)
+
 # Exploit-reference enrichment -----------------------------------------------
 # Optional local ExploitDB checkout CSV to resolve concrete EDB-IDs offline.
 # References/intel only — allscan never downloads, embeds or runs exploit code.
@@ -83,6 +96,9 @@ exploitdb_csv: null
 
 # Reporting ------------------------------------------------------------------
 pdf: false                    # also emit a ReportLab PDF (exec summary + risk table)
+
+# Engagement projects --------------------------------------------------------
+projects_dir: allscan-projects   # where `allscan project ...` stores engagements
 
 # Identification ------------------------------------------------------------
 user_agent: "allscan/1.0 (authorized security testing)"

@@ -140,6 +140,53 @@ def to_markdown(result: ScanResult) -> str:
             )
         lines.append("")
 
+    top = (result.meta or {}).get("top_risks") or []
+    if top:
+        lines.append("## Top Risks (business impact)")
+        lines.append("")
+        lines.append("| Score | Band | Sev | Likelihood | Asset | Finding |")
+        lines.append("| ---: | --- | --- | --- | --- | --- |")
+        for r in top[:15]:
+            lines.append(f"| {r['risk_score']} | {r['risk_band']} | {r['severity']} "
+                         f"| {r['likelihood']} | {r['criticality']} | {r['title'][:50]} |")
+        lines.append("")
+
+    matrix = (result.meta or {}).get("risk_matrix") or {}
+    if matrix:
+        lines.append("## Risk Matrix (severity × likelihood)")
+        lines.append("")
+        lines.append("| Severity ↓ / Likelihood → | High | Medium | Low |")
+        lines.append("| --- | ---: | ---: | ---: |")
+        for sev in ("high", "medium", "low", "info"):
+            if sev in matrix:
+                m = matrix[sev]
+                lines.append(f"| {sev.title()} | {m.get('high', 0)} | "
+                             f"{m.get('medium', 0)} | {m.get('low', 0)} |")
+        lines.append("")
+
+    tm = (result.meta or {}).get("threatmodel") or {}
+    if tm:
+        lines.append("## Threat Model & Compliance Mapping")
+        lines.append("")
+        stride = tm.get("stride") or {}
+        if stride:
+            lines.append("**STRIDE:** " + ", ".join(f"{k} ({v})" for k, v in stride.items()))
+            lines.append("")
+        if tm.get("attack_techniques"):
+            lines.append("| ATT&CK Technique | Name | Tactic | Count |")
+            lines.append("| --- | --- | --- | ---: |")
+            for t in tm["attack_techniques"][:15]:
+                lines.append(f"| {t['technique_id']} | {t['technique']} | "
+                             f"{t['tactic']} | {t['count']} |")
+            lines.append("")
+        fw = tm.get("compliance_frameworks") or {}
+        if fw:
+            lines.append("| Framework | References |")
+            lines.append("| --- | --- |")
+            for name, refs in fw.items():
+                lines.append(f"| {name.upper()} | {', '.join(refs)} |")
+            lines.append("")
+
     grouped = result.by_category()
     for category in sorted(grouped.keys()):
         findings = grouped[category]
@@ -181,6 +228,79 @@ def save_markdown(result: ScanResult, output_dir: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # HTML
 # --------------------------------------------------------------------------- #
+
+
+TYPE_COLUMNS = ["host", "ip", "asn", "service", "web", "cloud"]
+TYPE_COLORS = {"host": "#4a9eff", "ip": "#3fb950", "asn": "#f5a623",
+               "service": "#bc8cff", "web": "#2dd4bf", "cloud": "#e5484d"}
+
+
+def topology_svg(surface: dict, max_per_col: int = 24) -> str:
+    """Render the attack-surface map as a layered inline SVG (no deps).
+
+    Nodes are laid out in columns by type (host→ip→asn→service/web/cloud) and
+    edges drawn as connecting lines. Safe to embed in the HTML report.
+    """
+    nodes = (surface or {}).get("nodes") or []
+    edges = (surface or {}).get("edges") or []
+    if not nodes:
+        return ""
+    cols: dict[str, list] = {t: [] for t in TYPE_COLUMNS}
+    for n in nodes:
+        t = n.get("type")
+        if t in cols:
+            cols[t].append(n)
+    col_x = {t: 90 + i * 150 for i, t in enumerate(TYPE_COLUMNS)}
+    row_h = 26
+    pos: dict[str, tuple] = {}
+    max_rows = 1
+    for t in TYPE_COLUMNS:
+        items = cols[t][:max_per_col]
+        max_rows = max(max_rows, len(items))
+        for j, n in enumerate(items):
+            pos[n["id"]] = (col_x[t], 50 + j * row_h)
+    width = 90 + len(TYPE_COLUMNS) * 150
+    height = max(120, 50 + max_rows * row_h + 20)
+
+    def esc(s):
+        return html_lib.escape(str(s))
+
+    parts = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
+             f'style="max-height:460px" xmlns="http://www.w3.org/2000/svg">']
+    parts.append(f'<rect width="{width}" height="{height}" fill="#0d1117"/>')
+    # edges first (behind nodes)
+    for e in edges:
+        a, b = pos.get(e.get("from")), pos.get(e.get("to"))
+        if a and b:
+            parts.append(f'<line x1="{a[0]}" y1="{a[1]}" x2="{b[0]}" y2="{b[1]}" '
+                         f'stroke="#30363d" stroke-width="0.6"/>')
+    # column headers
+    for t in TYPE_COLUMNS:
+        if cols[t]:
+            parts.append(f'<text x="{col_x[t]}" y="28" fill="#8b949e" font-size="11" '
+                         f'text-anchor="middle" font-family="monospace">{t} '
+                         f'({len(cols[t])})</text>')
+    # nodes
+    for nid, (x, y) in pos.items():
+        ntype = next((n["type"] for n in nodes if n["id"] == nid), "host")
+        color = TYPE_COLORS.get(ntype, "#8b949e")
+        label = nid if len(nid) <= 22 else nid[:21] + "…"
+        parts.append(f'<circle cx="{x}" cy="{y}" r="3.5" fill="{color}"/>')
+        parts.append(f'<text x="{x + 6}" y="{y + 3}" fill="#c9d1d9" font-size="9" '
+                     f'font-family="monospace">{esc(label)}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def save_svg(result: ScanResult, output_dir: Path) -> Optional[Path]:
+    svg = topology_svg((result.meta or {}).get("surface") or {})
+    if not svg:
+        return None
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / (run_filename(result)[:-5] + "_topology.svg")
+    path.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + svg)
+    return path
 
 
 def to_html(result: ScanResult) -> str:
@@ -259,6 +379,73 @@ def to_html(result: ScanResult) -> str:
             + "</tbody></table></section>"
         )
 
+    # top risks by business impact
+    top = (result.meta or {}).get("top_risks") or []
+    toprisk_html = ""
+    if top:
+        band_color = {"Critical": "#e5484d", "High": "#f5a623",
+                      "Medium": "#d4a700", "Low": "#4a9eff"}
+        rows_html = "".join(
+            f"<tr><td style='text-align:right'><b>{r['risk_score']}</b></td>"
+            f"<td style='color:{band_color.get(r['risk_band'], '#8b949e')}'>{esc(r['risk_band'])}</td>"
+            f"<td>{esc(r['severity'])}</td><td>{esc(r['likelihood'])}</td>"
+            f"<td>{esc(r['criticality'])}</td><td>{esc(r['title'][:70])}</td></tr>"
+            for r in top[:15])
+        toprisk_html = (
+            '<section><h2>top risks <small>(business impact)</small></h2>'
+            '<table class="checklist"><thead><tr><th>Score</th><th>Band</th><th>Sev</th>'
+            '<th>Likelihood</th><th>Asset</th><th>Finding</th></tr></thead><tbody>'
+            + rows_html + "</tbody></table></section>")
+
+    # risk matrix (severity x likelihood)
+    matrix = (result.meta or {}).get("risk_matrix") or {}
+    risk_html = ""
+    if matrix:
+        likes = ["high", "medium", "low"]
+        cell_bg = {"high": "#e5484d", "medium": "#f5a623", "low": "#d4a700", "info": "#4a9eff"}
+        rows_html = []
+        for sev in ("high", "medium", "low", "info"):
+            if sev not in matrix:
+                continue
+            tds = "".join(
+                f'<td style="text-align:center">{matrix[sev].get(l, 0) or ""}</td>'
+                for l in likes)
+            rows_html.append(
+                f'<tr><th style="color:{cell_bg.get(sev)}">{esc(sev.title())}</th>{tds}</tr>')
+        risk_html = (
+            '<section><h2>risk matrix <small>(severity × likelihood)</small></h2>'
+            '<table class="checklist"><thead><tr><th>Severity ↓ / Likelihood →</th>'
+            '<th>High</th><th>Medium</th><th>Low</th></tr></thead><tbody>'
+            + "".join(rows_html) + "</tbody></table></section>")
+
+    # ATT&CK / STRIDE / compliance mapping
+    tm = (result.meta or {}).get("threatmodel") or {}
+    mapping_html = ""
+    if tm:
+        techs = "".join(
+            f"<tr><td>{esc(t['technique_id'])}</td><td>{esc(t['technique'])}</td>"
+            f"<td>{esc(t['tactic'])}</td><td style='text-align:center'>{t['count']}</td></tr>"
+            for t in tm.get("attack_techniques", [])[:15])
+        stride = " · ".join(f"{k}: {v}" for k, v in (tm.get("stride") or {}).items())
+        fw = tm.get("compliance_frameworks") or {}
+        fw_rows = "".join(
+            f"<tr><td>{esc(name.upper())}</td><td>{esc(', '.join(refs))}</td></tr>"
+            for name, refs in fw.items())
+        mapping_html = (
+            '<section><h2>threat model &amp; compliance mapping</h2>'
+            + (f'<p class="cdetail">STRIDE: {esc(stride)}</p>' if stride else '')
+            + '<h3 style="color:#8b949e">MITRE ATT&CK techniques</h3>'
+            '<table class="checklist"><thead><tr><th>Technique</th><th>Name</th>'
+            '<th>Tactic</th><th>Count</th></tr></thead><tbody>' + techs + '</tbody></table>'
+            + ('<h3 style="color:#8b949e">Compliance frameworks</h3>'
+               '<table class="checklist"><thead><tr><th>Framework</th><th>References</th>'
+               '</tr></thead><tbody>' + fw_rows + '</tbody></table>' if fw_rows else '')
+            + '</section>')
+
+    # topology diagram from the surface map
+    topo = topology_svg((result.meta or {}).get("surface") or {})
+    topo_html = (f'<section><h2>attack-surface topology</h2>{topo}</section>' if topo else "")
+
     body_sections = "\n".join(sections)
     started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(result.started_at))
     partial = (
@@ -318,6 +505,10 @@ def to_html(result: ScanResult) -> str:
   {partial}
   <div class="pills">{pills}</div>
   {compliance_html}
+  {toprisk_html}
+  {risk_html}
+  {topo_html}
+  {mapping_html}
   {body_sections}
   <footer>Generated by allscan — for authorized security testing only.</footer>
 </body>

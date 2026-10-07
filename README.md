@@ -37,11 +37,14 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 | **SSL/TLS Deep Audit** (`tls`) | Protocol support matrix (SSLv3 / TLS 1.0–1.3 accepted?), full certificate-chain validation against the system trust store, and certificate-expiry warnings. Flags deprecated protocols. |
 | **Cloud Exposure** (`cloud`) | Detects cloud-storage bucket references (S3, Azure Blob, GCS) in subdomains/HTML and classifies each as publicly listable / private / absent with a single bucket-root request (no object access). Flags cloud metadata-endpoint references (SSRF sinks) — reference only, never probed. |
 | **WAF/CDN & Rate-limit Detection** (`waf`) | Fingerprints WAFs/CDNs (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, F5, ModSecurity, …) from headers/cookies, and observes rate-limiting (HTTP 429) over a small, bounded request burst. |
-| **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
+| **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing, **permissive CORS, host-header reflection**, and **JWT analysis** (decode-only: flags `alg=none`/weak alg) — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
+| **Scanner Integrations** (`integrations`) | *Opt-in (`--integrations …`).* Wraps external tools **if installed** and folds their output into the finding model: `subfinder`/`amass`/`httpx` (passive) and `nuclei`/`nikto`/`sqlmap`/`masscan` (active — also require `--active` and pass the scope guard). `sqlmap` runs its **detection phase only** (`--batch`, no `--dump`/`--os-*`). allscan never installs tools or runs an exploitation mode. |
 | **CVE Correlation** (`vulns`) | Matches detected service/library versions against the **NVD** and **CIRCL CVE Search** APIs (merged + deduped) and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
+| **Vuln Intelligence & Risk Scoring** (`vulnintel`) | Finishes the vuln-intel picture: derives a **CPE 2.3** string per versioned service/CVE, **ages** each CVE (flagging old + KEV/high), and computes a **business-impact risk score** (0–100 + band) from severity × likelihood × **asset criticality** (`--criticality` / `--asset-criticality`). Honours a **false-positive suppression** list (`--suppress`). Produces a Top-Risks roll-up in the report. |
 | **Exploit-Reference Enrichment** (`exploitrefs`) | For each correlated CVE, adds decision-useful **references and risk signals**: CISA **KEV** (exploited-in-the-wild) status, **EPSS** score/percentile, and ExploitDB / Metasploit reference links (plus concrete EDB-IDs when pointed at a local ExploitDB `files_exploits.csv`). *References and intelligence only — no exploit code is downloaded, embedded, or run, and no exploitation is performed.* |
+| **Threat Model & Compliance Mapping** (`threatmodel`) | Rolls findings up into a **risk matrix** (severity × likelihood, where likelihood is raised by KEV / high EPSS / active confirmation), a **MITRE ATT&CK** technique spread, a **STRIDE** category spread, and the **OWASP / CWE / NIST / CIS / PCI** references touched. Rendered as report sections; the data is in the JSON. |
 | **Compliance Checklist** (`compliance`) | Runs last and rolls up all findings into a pass/fail/warn checklist against common baselines (OWASP Secure Headers, basic TLS hygiene, email auth, DNS hygiene, exposure hygiene). Rendered as a dedicated section in the report. |
-| **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded, with the compliance checklist), and a diff mode comparing two runs for the same target. |
+| **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded, with the compliance checklist, **risk matrix**, **ATT&CK/STRIDE/compliance mapping**, and an **attack-surface topology diagram** rendered as inline SVG), a standalone topology `.svg`, an optional PDF, and a diff mode comparing two runs. |
 
 All modules are **detection-only**: they identify and report issues and never
 exploit them — no bucket writes, no auth bypass, no SSRF probing, no access of
@@ -144,8 +147,49 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | `--allow-production` | Acknowledge a production target, silence the warning |
 | `--active-max-concurrency N` | Active-only worker cap (default 8) |
 | `--active-stop-after-errors N` | Auto-stop active probing after N consecutive errors |
+| `--integrations t1,t2` | Wrap installed scanners: subfinder,amass,httpx (passive); nuclei,nikto,sqlmap,masscan (active) |
 
 Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
+
+---
+
+## Engagement projects & workflow
+
+A local, file-based engagement layer (no server) stores a project with its
+scope, rules-of-engagement, testing window and **authorization evidence**, then
+tracks findings and retests across runs.
+
+```bash
+# create an engagement (store authorization evidence up front)
+allscan project create acme --client "ACME Inc" \
+    --scope-allow "app.acme.test,10.0.0.0/24" --scope-deny "prod.acme.test" \
+    --roe ./rules-of-engagement.md --window-start 2026-02-01 --window-end 2026-02-14 \
+    --authorization ./signed-authorization.pdf
+
+# scan under the project: its scope is applied, its window gates active work,
+# and findings are ingested into the project's ledger
+allscan app.acme.test --i-have-authorization --all --active --project acme
+
+allscan project show acme                     # engagement status
+allscan findings list acme --status open      # the findings ledger
+allscan findings set-status acme <fp> false-positive --note "WAF test page"
+allscan evidence add acme ./screenshot.png --note "login bypass attempt"
+allscan evidence verify acme                  # chain-of-custody integrity check
+allscan retest acme --run <new-run>.json      # fixed / not-fixed / regression
+```
+
+- **Scope** from the project is merged into the scan's allow/deny, so active
+  probing stays in bounds.
+- **Testing window**: active probing is automatically disabled outside the
+  window (passive recon still runs).
+- **Findings ledger**: findings are deduped by a stable fingerprint and carry a
+  status workflow (`open → confirmed / false-positive / fixed / accepted /
+  regression`) with first/last-seen and history.
+- **Retest**: compares a fresh run to the ledger — absent findings become
+  `fixed`, reappearing ones become `regression`.
+- **Evidence**: files are copied into the project with a SHA-256, size,
+  timestamp and tester identity; every action is appended to an activity log
+  (`ALLSCAN_TESTER` sets the attributed identity).
 
 ---
 
@@ -326,10 +370,15 @@ allscan/
 ├── cloud.py           cloud bucket + metadata-endpoint exposure
 ├── waf.py             WAF/CDN fingerprint + rate-limit observation
 ├── scope.py           scope enforcement (allow/deny, out-of-scope blocking)
+├── integrations.py    optional external-scanner wrappers (opt-in; parsers)
 ├── active.py          active probing (detection-only; gated behind --active)
 ├── vulns.py           CVE correlation (NVD + CIRCL)
 ├── exploitrefs.py     exploit REFERENCES + KEV/EPSS enrichment (no payloads)
 ├── compliance.py      baseline pass/fail checklist roll-up
+├── vulnintel.py       CPE, vuln-age, business-impact risk scoring, FP suppression
+├── mapping.py         ATT&CK / STRIDE / OWASP-NIST-CIS-PCI mapping tables + risk
+├── threatmodel.py     threat-model & compliance roll-up (risk matrix, mappings)
+├── platform.py        engagement projects: scope/RoE/window/auth, ledger, retest, evidence
 ├── report.py          JSON/Markdown/HTML reporting + diff + aggregate
 └── report_pdf.py      PDF report (ReportLab; exec summary + risk table)
 tests/                 offline unit tests (no network)
