@@ -1,0 +1,244 @@
+"""Offline unit tests for allscan.
+
+These tests never touch the network: the engine tests patch the module
+registry with in-memory stubs, and everything else exercises pure data/logic
+(models, reporting, diffing, config, validation, secret scanning).
+
+Run with:  pytest -q
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+import allscan.engine as engine_mod
+from allscan.base import Module
+from allscan.config import Config
+from allscan.engine import Engine
+from allscan.models import Category, Finding, ScanResult, Severity
+from allscan.utils import (
+    RateLimiter,
+    ScanCancelled,
+    normalize_target,
+    scan_for_secrets,
+    validate_target,
+)
+from allscan import report
+
+
+# --------------------------------------------------------------------------- #
+# stub modules (no network)
+# --------------------------------------------------------------------------- #
+
+
+class StubRecon(Module):
+    name = "recon"
+    label = "recon"
+
+    def run(self, ctx):
+        ctx.log("discovering")
+        ctx.state["hosts"] = {"a.example.test": ["203.0.113.1"]}
+        return [
+            ctx.emit(
+                Finding(
+                    category=Category.SUBDOMAIN,
+                    title="a.example.test",
+                    target="example.test",
+                )
+            )
+        ]
+
+
+class StubScan(Module):
+    name = "scan"
+    label = "scan"
+
+    def run(self, ctx):
+        ctx.cancel.raise_if_cancelled()
+        return [
+            ctx.emit(
+                Finding(
+                    category=Category.PORT,
+                    title="203.0.113.1:80 open",
+                    severity=Severity.INFO,
+                )
+            )
+        ]
+
+
+class BoomModule(Module):
+    name = "web"
+    label = "web"
+
+    def run(self, ctx):
+        raise RuntimeError("kaboom")
+
+
+@pytest.fixture
+def stub_registry(monkeypatch):
+    reg = {"recon": StubRecon(), "scan": StubScan(), "web": BoomModule()}
+    monkeypatch.setattr(engine_mod, "get_registry", lambda: reg)
+    return reg
+
+
+# --------------------------------------------------------------------------- #
+# validation / utils
+# --------------------------------------------------------------------------- #
+
+
+def test_normalize_target_strips_scheme_port_path():
+    assert normalize_target("https://Example.COM:8443/a/b?x=1") == "example.com"
+    assert normalize_target("http://10.0.0.1/") == "10.0.0.1"
+
+
+@pytest.mark.parametrize(
+    "value,ok",
+    [
+        ("example.com", True),
+        ("sub.example.co.uk", True),
+        ("8.8.8.8", True),
+        ("::1", True),
+        ("not a host", False),
+        ("", False),
+    ],
+)
+def test_validate_target(value, ok):
+    assert validate_target(value)[0] is ok
+
+
+def test_rate_limiter_zero_is_noop():
+    rl = RateLimiter(0)
+    rl.acquire()  # must not block or raise
+
+
+def test_scan_for_secrets_finds_and_truncates():
+    text = 'aws="AKIAIOSFODNN7EXAMPLE" token: "ghp_' + "a" * 40 + '"'
+    hits = {label for label, _ in scan_for_secrets(text)}
+    assert "AWS Access Key ID" in hits
+    assert any("GitHub" in h for h in hits)
+
+
+# --------------------------------------------------------------------------- #
+# models
+# --------------------------------------------------------------------------- #
+
+
+def test_finding_dedupe_keeps_highest_severity():
+    r = ScanResult(target="example.test")
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.LOW))
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    assert len(r.findings) == 1
+    assert r.findings[0].severity is Severity.MEDIUM
+
+
+def test_scanresult_roundtrip():
+    r = ScanResult(target="example.test")
+    r.add(Finding(category=Category.CVE, title="CVE-1", severity=Severity.HIGH, evidence={"x": 1}))
+    data = r.to_dict()
+    r2 = ScanResult.from_dict(data)
+    assert r2.target == "example.test"
+    assert r2.findings[0].severity is Severity.HIGH
+    assert r2.findings[0].evidence == {"x": 1}
+
+
+def test_severity_ordering():
+    assert Severity.INFO < Severity.LOW < Severity.MEDIUM < Severity.HIGH
+
+
+# --------------------------------------------------------------------------- #
+# engine
+# --------------------------------------------------------------------------- #
+
+
+def test_engine_runs_in_order_and_collects(stub_registry):
+    cfg = Config(modules=["scan", "recon"], rate_limit=0)
+    statuses = []
+    eng = Engine("example.test", cfg, on_status=lambda m, s: statuses.append((m, s)))
+    result = eng.run()
+    # canonical order forces recon before scan despite config order
+    assert result.modules_run == ["recon", "scan"]
+    titles = {f.title for f in result.findings}
+    assert "a.example.test" in titles
+    assert any(m == "recon" and s == "done" for m, s in statuses)
+
+
+def test_engine_module_error_is_isolated(stub_registry):
+    cfg = Config(modules=["recon", "web", "scan"], rate_limit=0)
+    errors = []
+    eng = Engine(
+        "example.test",
+        cfg,
+        on_status=lambda m, s: errors.append((m, s)) if s == "error" else None,
+    )
+    result = eng.run()
+    # web blew up but recon+scan still ran and were recorded
+    assert "recon" in result.modules_run and "scan" in result.modules_run
+    assert "web" not in result.modules_run
+    assert ("web", "error") in errors
+
+
+def test_engine_cancel_yields_partial(stub_registry):
+    cfg = Config(modules=["recon", "scan"], rate_limit=0)
+    eng = Engine("example.test", cfg)
+    eng.request_cancel()
+    result = eng.run()
+    assert result.partial is True
+
+
+# --------------------------------------------------------------------------- #
+# reporting + diff
+# --------------------------------------------------------------------------- #
+
+
+def _sample(target="example.test", extra=None):
+    r = ScanResult(target=target)
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    if extra:
+        r.add(extra)
+    r.finished_at = r.started_at + 1
+    return r
+
+
+def test_save_and_list_runs(tmp_path: Path):
+    r = _sample()
+    jp = report.save_json(r, tmp_path)
+    report.save_markdown(r, tmp_path)
+    report.save_html(r, tmp_path)
+    assert jp.exists()
+    runs = report.list_runs(tmp_path)
+    assert len(runs) == 1
+    assert runs[0].target == "example.test"
+
+
+def test_markdown_and_html_contain_findings():
+    r = _sample()
+    md = report.to_markdown(r)
+    html = report.to_html(r)
+    assert "Missing CSP" in md and "Missing CSP" in html
+    assert "example.test" in html
+
+
+def test_diff_added_removed():
+    old = _sample()
+    new = _sample(
+        extra=Finding(category=Category.TLS, title="Weak TLS", severity=Severity.HIGH)
+    )
+    # remove the CSP finding from new to make it "resolved"
+    new.findings = [f for f in new.findings if f.title != "Missing CSP"]
+    d = report.diff_runs(old, new)
+    assert any(f.title == "Weak TLS" for f in d.added)
+    assert any(f.title == "Missing CSP" for f in d.removed)
+
+
+# --------------------------------------------------------------------------- #
+# config
+# --------------------------------------------------------------------------- #
+
+
+def test_config_overrides_skip_none():
+    cfg = Config()
+    out = cfg.apply_overrides(threads=None, rate_limit=99.0)
+    assert out.threads == cfg.threads  # None left untouched
+    assert out.rate_limit == 99.0

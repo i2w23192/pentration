@@ -1,0 +1,10 @@
+# allscan runtime dependencies
+rich>=13.7
+textual>=0.58
+requests>=2.31
+dnspython>=2.4
+PyYAML>=6.0
+# nmap is an external system binary, not a Python package:
+#   Debian/Ubuntu: sudo apt install nmap
+#   macOS:         brew install nmap
+# allscan falls back to a built-in connect/banner scanner if nmap is absent.
