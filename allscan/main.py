@@ -21,7 +21,7 @@ from typing import Optional
 
 from allscan import __version__
 from allscan.config import DEFAULTS, MODULE_LABELS, Config
-from allscan.engine import Engine
+from allscan.engine import MODULE_ORDER, Engine
 from allscan.models import ScanResult, Severity
 from allscan.utils import validate_target
 
@@ -55,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
         + ",".join(MODULE_LABELS.keys())
         + " (default: all)",
     )
+    p.add_argument("--all", dest="run_all", action="store_true",
+                   help="Run every module (recon→scan→web→headers→vulns) with defaults")
     p.add_argument("--full-ports", action="store_true", help="Scan all 65535 ports")
     p.add_argument("--skip-nmap", action="store_true", help="Skip nmap; use built-in scanner")
     p.add_argument("--os-detection", action="store_true", help="nmap OS detection (-O, needs root)")
@@ -100,7 +102,10 @@ def build_list_parser() -> argparse.ArgumentParser:
 def config_from_args(args) -> Config:
     base = Config.load(args.config)
     modules = None
-    if args.modules:
+    if getattr(args, "run_all", False):
+        # --all forces the full chain regardless of config/--modules.
+        modules = list(MODULE_ORDER)
+    elif args.modules:
         modules = [m.strip() for m in args.modules.split(",") if m.strip()]
     return base.apply_overrides(
         threads=args.threads,
