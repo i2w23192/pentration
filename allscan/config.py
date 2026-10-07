@@ -57,6 +57,7 @@ DEFAULTS: dict[str, Any] = {
     "cve_sources": ["nvd", "circl"],  # CVE data sources to query (nvd, circl)
     "exploitdb_csv": None,        # optional local ExploitDB files_exploits.csv for EDB-ID refs
     "pdf": False,                 # also emit a ReportLab PDF report
+    "projects_dir": "allscan-projects",  # engagement/project store location
     "dns_resolvers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
     "max_subdomains_bruteforce": 2000,
     "follow_redirects": True,
@@ -104,6 +105,7 @@ class Config:
     cve_sources: list[str] = field(default_factory=lambda: list(DEFAULTS["cve_sources"]))
     exploitdb_csv: Optional[str] = DEFAULTS["exploitdb_csv"]
     pdf: bool = DEFAULTS["pdf"]
+    projects_dir: str = DEFAULTS["projects_dir"]
     dns_resolvers: list[str] = field(default_factory=lambda: list(DEFAULTS["dns_resolvers"]))
     max_subdomains_bruteforce: int = DEFAULTS["max_subdomains_bruteforce"]
     follow_redirects: bool = DEFAULTS["follow_redirects"]

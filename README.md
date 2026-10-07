@@ -151,6 +151,46 @@ Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
 
 ---
 
+## Engagement projects & workflow
+
+A local, file-based engagement layer (no server) stores a project with its
+scope, rules-of-engagement, testing window and **authorization evidence**, then
+tracks findings and retests across runs.
+
+```bash
+# create an engagement (store authorization evidence up front)
+allscan project create acme --client "ACME Inc" \
+    --scope-allow "app.acme.test,10.0.0.0/24" --scope-deny "prod.acme.test" \
+    --roe ./rules-of-engagement.md --window-start 2026-02-01 --window-end 2026-02-14 \
+    --authorization ./signed-authorization.pdf
+
+# scan under the project: its scope is applied, its window gates active work,
+# and findings are ingested into the project's ledger
+allscan app.acme.test --i-have-authorization --all --active --project acme
+
+allscan project show acme                     # engagement status
+allscan findings list acme --status open      # the findings ledger
+allscan findings set-status acme <fp> false-positive --note "WAF test page"
+allscan evidence add acme ./screenshot.png --note "login bypass attempt"
+allscan evidence verify acme                  # chain-of-custody integrity check
+allscan retest acme --run <new-run>.json      # fixed / not-fixed / regression
+```
+
+- **Scope** from the project is merged into the scan's allow/deny, so active
+  probing stays in bounds.
+- **Testing window**: active probing is automatically disabled outside the
+  window (passive recon still runs).
+- **Findings ledger**: findings are deduped by a stable fingerprint and carry a
+  status workflow (`open → confirmed / false-positive / fixed / accepted /
+  regression`) with first/last-seen and history.
+- **Retest**: compares a fresh run to the ledger — absent findings become
+  `fixed`, reappearing ones become `regression`.
+- **Evidence**: files are copied into the project with a SHA-256, size,
+  timestamp and tester identity; every action is appended to an activity log
+  (`ALLSCAN_TESTER` sets the attributed identity).
+
+---
+
 ## Active probing (detection mode)
 
 By default allscan is **passive** — it observes. The opt-in **active** profile
@@ -333,6 +373,7 @@ allscan/
 ├── vulns.py           CVE correlation (NVD + CIRCL)
 ├── exploitrefs.py     exploit REFERENCES + KEV/EPSS enrichment (no payloads)
 ├── compliance.py      baseline pass/fail checklist roll-up
+├── platform.py        engagement projects: scope/RoE/window/auth, ledger, retest, evidence
 ├── report.py          JSON/Markdown/HTML reporting + diff + aggregate
 └── report_pdf.py      PDF report (ReportLab; exec summary + risk table)
 tests/                 offline unit tests (no network)

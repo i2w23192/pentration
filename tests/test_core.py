@@ -715,6 +715,90 @@ def test_integrations_gating(monkeypatch):
     assert any("requires --active" in (f.description or "") for f in out2)
 
 
+# --------------------------------------------------------------------------- #
+# phase 5: engagement platform (projects / evidence / ledger / retest)
+# --------------------------------------------------------------------------- #
+
+
+def test_platform_project_scope_window_and_auth(tmp_path):
+    from allscan.platform import ProjectStore
+
+    st = ProjectStore(str(tmp_path))
+    p = st.create("acme", "ACME")
+    p.set_scope(allow=["app.acme.test"], deny=["prod.acme.test"])
+    p.set_window("2020-01-01", "2020-01-02")  # in the past
+    assert p.within_window() is False
+    authf = tmp_path / "auth.txt"
+    authf.write_text("authorized")
+    rec = p.add_authorization(str(authf))
+    assert len(rec["sha256"]) == 64 and p.has_authorization
+    assert p.data["scope"]["allow"] == ["app.acme.test"]
+
+
+def test_platform_evidence_chain_of_custody_detects_tamper(tmp_path):
+    from allscan.platform import ProjectStore
+
+    st = ProjectStore(str(tmp_path))
+    p = st.create("e")
+    f = tmp_path / "shot.txt"
+    f.write_text("original")
+    rec = p.add_evidence(str(f), "note")
+    assert p.verify_evidence()[0]["intact"] is True
+    # tamper with the STORED copy -> verify must flag it
+    Path(rec["stored_path"]).write_text("tampered!")
+    assert p.verify_evidence()[0]["intact"] is False
+
+
+def test_platform_ledger_dedup_status_and_fingerprint_stable():
+    from allscan.platform import ProjectStore, fingerprint
+
+    f1 = Finding(category=Category.CVE, title="CVE-1", severity=Severity.HIGH)
+    f2 = Finding(category=Category.CVE, title="CVE-1", severity=Severity.HIGH)
+    assert fingerprint(f1) == fingerprint(f2)  # stable across instances
+
+    import tempfile
+    st = ProjectStore(tempfile.mkdtemp())
+    p = st.create("l")
+    r = ScanResult(target="x.test")
+    r.add(f1)
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    info = p.ingest_run(r)
+    assert info["new"] == 2
+    # ingesting the same findings again dedups (0 new)
+    info2 = p.ingest_run(r)
+    assert info2["new"] == 0 and info2["updated"] == 2
+    fp = fingerprint(f1)
+    p.set_finding_status(fp, "confirmed", "verified")
+    assert p.data["findings"][fp]["status"] == "confirmed"
+
+
+def test_platform_retest_fixed_notfixed_regression():
+    import tempfile
+    from allscan.platform import ProjectStore, fingerprint
+
+    st = ProjectStore(tempfile.mkdtemp())
+    p = st.create("r")
+    base = ScanResult(target="x.test")
+    csp = Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM)
+    cve = Finding(category=Category.CVE, title="CVE-9", severity=Severity.HIGH)
+    base.add(csp)
+    base.add(cve)
+    p.ingest_run(base)
+
+    # retest: CSP fixed (absent), CVE-9 still present
+    rt = ScanResult(target="x.test")
+    rt.add(Finding(category=Category.CVE, title="CVE-9", severity=Severity.HIGH))
+    rep = p.retest(rt)
+    assert rep["counts"]["fixed"] == 1 and rep["counts"]["not_fixed"] == 1
+    assert p.data["findings"][fingerprint(csp)]["status"] == "fixed"
+
+    # a later run where CSP reappears => regression
+    back = ScanResult(target="x.test")
+    back.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    p.ingest_run(back)
+    assert p.data["findings"][fingerprint(csp)]["status"] == "regression"
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""

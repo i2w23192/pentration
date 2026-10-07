@@ -90,5 +90,8 @@ exploitdb_csv: null
 # Reporting ------------------------------------------------------------------
 pdf: false                    # also emit a ReportLab PDF (exec summary + risk table)
 
+# Engagement projects --------------------------------------------------------
+projects_dir: allscan-projects   # where `allscan project ...` stores engagements
+
 # Identification ------------------------------------------------------------
 user_agent: "allscan/1.0 (authorized security testing)"
