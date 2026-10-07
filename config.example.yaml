@@ -33,6 +33,7 @@ modules:
   - vulns              # informational CVE correlation + misconfigs
   - exploitrefs        # exploit references + KEV/EPSS enrichment (no payloads)
   - surface            # attack-surface + infra-relationship roll-up
+  - threatmodel        # ATT&CK / STRIDE / compliance mapping + risk matrix
   - compliance         # baseline pass/fail checklist roll-up (runs last)
 
 # Network/host discovery ----------------------------------------------------

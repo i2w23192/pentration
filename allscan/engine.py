@@ -43,6 +43,7 @@ MODULE_ORDER = [
     "vulns",         # informational CVE correlation + misconfigs
     "exploitrefs",   # exploit REFERENCES + KEV/EPSS enrichment (no payloads)
     "surface",       # attack-surface + infra-relationship roll-up
+    "threatmodel",   # ATT&CK / STRIDE / compliance mapping + risk matrix
     "compliance",    # baseline pass/fail checklist roll-up (must be last)
 ]
 
@@ -144,6 +145,8 @@ class Engine:
                 "services": shared_state.get("services", []),
                 "compliance": shared_state.get("compliance", []),
                 "surface": shared_state.get("surface", {}),
+                "risk_matrix": shared_state.get("risk_matrix", {}),
+                "threatmodel": shared_state.get("threatmodel", {}),
             }
             audit.record("scan_end", self.target, partial=self.result.partial,
                          findings=len(self.result.findings))

@@ -93,6 +93,7 @@ def get_registry() -> dict[str, "Module"]:
     from allscan.vulns import VulnsModule
     from allscan.exploitrefs import ExploitRefsModule
     from allscan.surface import SurfaceModule
+    from allscan.threatmodel import ThreatModelModule
     from allscan.compliance import ComplianceModule
 
     instances = [
@@ -115,6 +116,7 @@ def get_registry() -> dict[str, "Module"]:
         VulnsModule(),
         ExploitRefsModule(),
         SurfaceModule(),
+        ThreatModelModule(),
         ComplianceModule(),
     ]
     return {m.name: m for m in instances}

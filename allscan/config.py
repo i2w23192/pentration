@@ -35,7 +35,8 @@ DEFAULTS: dict[str, Any] = {
     "modules": [
         "netdiscover", "recon", "dnsx", "whois", "asn", "certs", "email",
         "scan", "web", "fingerprint", "headers", "tls", "cloud", "waf",
-        "integrations", "active", "vulns", "exploitrefs", "surface", "compliance",
+        "integrations", "active", "vulns", "exploitrefs", "surface",
+        "threatmodel", "compliance",
     ],
     "integrations": [],           # external scanner wrappers to enable (opt-in)
     "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
@@ -84,6 +85,7 @@ MODULE_LABELS = {
     "vulns": "CVE Correlation",
     "exploitrefs": "Exploit-Reference Enrichment",
     "surface": "Attack-Surface Mapping",
+    "threatmodel": "Threat Model & Compliance Mapping",
     "compliance": "Compliance Checklist",
 }
 

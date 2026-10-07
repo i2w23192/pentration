@@ -320,6 +320,9 @@ def write_outputs(result: ScanResult, config: Config, json_only: bool) -> list[P
     if not json_only:
         paths.append(report.save_markdown(result, out))
         paths.append(report.save_html(result, out))
+        svg = report.save_svg(result, out)
+        if svg is not None:
+            paths.append(svg)
         if getattr(config, "pdf", False):
             try:
                 from allscan import report_pdf

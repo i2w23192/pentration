@@ -799,6 +799,92 @@ def test_platform_retest_fixed_notfixed_regression():
     assert p.data["findings"][fingerprint(csp)]["status"] == "regression"
 
 
+# --------------------------------------------------------------------------- #
+# phase 6: threat-model/compliance mapping + topology + report sections
+# --------------------------------------------------------------------------- #
+
+
+def test_mapping_attack_stride_compliance():
+    from allscan import mapping
+
+    sqli = Finding(category=Category.ACTIVE, title="injectable", severity=Severity.HIGH,
+                   evidence={"type": "sql-injection"})
+    a = mapping.attack(sqli)
+    assert a["technique_id"] == "T1190" and a["tactic"] == "Initial Access"
+    assert "Tampering" in mapping.stride(sqli)
+    refs = mapping.compliance_refs(sqli)
+    assert refs["owasp"].startswith("A03") and refs["cwe"] == "CWE-89"
+
+    hdr = Finding(category=Category.HEADER, title="Missing content-security-policy header")
+    assert mapping.compliance_refs(hdr)["cwe"] == "CWE-693"
+
+
+def test_mapping_likelihood_and_risk_matrix():
+    from allscan import mapping
+
+    kev = Finding(category=Category.EXPLOITREF, title="CVE-x", severity=Severity.HIGH,
+                  evidence={"kev": True})
+    assert mapping.likelihood(kev) == "high"
+    low = Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.LOW)
+    assert mapping.likelihood(low) == "low"
+    m = mapping.risk_matrix([kev, low])
+    assert m["high"]["high"] == 1
+    assert m["low"]["low"] == 1
+
+
+def test_threatmodel_module_stashes_meta():
+    from allscan.threatmodel import ThreatModelModule
+
+    result = ScanResult(target="x.test")
+    result.add(Finding(category=Category.ACTIVE, title="injectable", severity=Severity.HIGH,
+                       evidence={"type": "sql-injection"}))
+    result.add(Finding(category=Category.TLS, title="Weak cipher negotiated", severity=Severity.HIGH))
+    ctx = _make_ctx(state={"_result": result})
+    out = ThreatModelModule().run(ctx)
+    assert out and "ATT&CK" in out[0].title
+    assert ctx.state["risk_matrix"]["high"]  # populated
+    tm = ctx.state["threatmodel"]
+    assert any(t["technique_id"] == "T1190" for t in tm["attack_techniques"])
+    assert "compliance_frameworks" in tm
+
+
+def test_topology_svg_from_surface():
+    from allscan import report
+
+    surface = {"nodes": [{"id": "a.x.test", "type": "host"},
+                         {"id": "10.0.0.1", "type": "ip"},
+                         {"id": "AS111", "type": "asn"}],
+               "edges": [{"from": "a.x.test", "to": "10.0.0.1", "kind": "resolves_to"},
+                         {"from": "10.0.0.1", "to": "AS111", "kind": "announced_by"}]}
+    svg = report.topology_svg(surface)
+    assert svg.startswith("<svg") and "a.x.test" in svg and "<line" in svg
+    assert report.topology_svg({}) == ""  # empty surface -> no svg
+
+
+def test_report_has_risk_matrix_and_mapping_sections():
+    from allscan import report
+
+    r = ScanResult(target="x.test")
+    r.add(Finding(category=Category.ACTIVE, title="injectable", severity=Severity.HIGH,
+                  evidence={"type": "sql-injection"}))
+    r.meta = {
+        "risk_matrix": {"high": {"high": 1, "medium": 0, "low": 0},
+                        "medium": {"high": 0, "medium": 0, "low": 0},
+                        "low": {"high": 0, "medium": 0, "low": 0},
+                        "info": {"high": 0, "medium": 0, "low": 0}},
+        "threatmodel": {"attack_techniques": [{"technique_id": "T1190",
+                        "technique": "Exploit Public-Facing Application",
+                        "tactic": "Initial Access", "count": 1}],
+                        "stride": {"Tampering": 1},
+                        "compliance_frameworks": {"owasp": ["A03:2021 Injection"]}},
+        "surface": {"nodes": [{"id": "x.test", "type": "host"}], "edges": []},
+    }
+    md = report.to_markdown(r)
+    html = report.to_html(r)
+    assert "Risk Matrix" in md and "T1190" in md and "A03:2021" in md
+    assert "risk matrix" in html and "T1190" in html and "attack-surface topology" in html
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""
