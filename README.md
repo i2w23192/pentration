@@ -22,12 +22,26 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 
 | Module | What it does |
 | --- | --- |
+| **Network/Host Discovery** (`netdiscover`) | ICMP ping sweep across a CIDR (defaults to the /24 of the resolved target), read-only ARP neighbour listing, and traceroute hop listing. Shells out to standard tools and degrades gracefully when ICMP/raw sockets are unavailable. |
 | **Subdomain Discovery** (`recon`) | Passive: crt.sh certificate transparency, DNS records (A/AAAA/MX/TXT/NS/CNAME/SOA), reverse PTR. Active: async wordlist brute force, AXFR zone-transfer attempts. Flags wildcard DNS and filters its noise. |
+| **DNS Deep-Dive** (`dnsx`) | Full record dump (SOA, NS, CAA, DNSKEY, DS, TXT, SRV service probes), DNSSEC presence/validation check (DNSKEY + AD flag), and informational DNS cache-snooping detection. Flags missing CAA and unsigned zones. |
+| **Email Security** (`email`) | SPF, DKIM (common-selector probe) and DMARC presence + basic validity. Flags missing records, permissive SPF (`+all`/`?all`) and monitor-only DMARC (`p=none`). |
 | **Port/Service Scan** (`scan`) | Wraps `nmap` (top-1000 by default, full 65535 optional, `-sV` version detection, optional `-O` OS detection). Falls back to a built-in concurrent connect scanner + banner grabber when nmap is unavailable or skipped. Flags sensitive exposed services (Redis, Mongo, Docker API, …). |
 | **Web Enumeration** (`web`) | HTTP/HTTPS probing of every discovered host (status, title, tech fingerprint), plus content brute forcing for sensitive paths (`.git/`, `.env`, backups, config files, actuators, admin panels) and directory-listing detection. |
-| **HTML/Header Analysis** (`headers`) | Security-header audit (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), verbose-header and cookie-flag checks, TLS protocol/cipher/cert inspection, and HTML source analysis (exposed comments, credential-shaped strings, internal paths, outdated JS libraries, risky inline JS). |
+| **API & Tech Fingerprinting** (`fingerprint`) | Probes common API/doc endpoints (`/api`, `/graphql`, swagger/openapi), CMS detection with version (WordPress, Drupal, Joomla, Magento, …), and server-side framework / front-end library fingerprinting. Version-bearing hits feed CVE correlation. |
+| **HTML/Header Analysis** (`headers`) | Security-header audit (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), verbose-header and cookie-flag checks, and HTML source analysis (exposed comments, credential-shaped strings, internal paths, outdated JS libraries, risky inline JS). |
+| **SSL/TLS Deep Audit** (`tls`) | Protocol support matrix (SSLv3 / TLS 1.0–1.3 accepted?), full certificate-chain validation against the system trust store, and certificate-expiry warnings. Flags deprecated protocols. |
+| **Cloud Exposure** (`cloud`) | Detects cloud-storage bucket references (S3, Azure Blob, GCS) in subdomains/HTML and classifies each as publicly listable / private / absent with a single bucket-root request (no object access). Flags cloud metadata-endpoint references (SSRF sinks) — reference only, never probed. |
+| **WAF/CDN & Rate-limit Detection** (`waf`) | Fingerprints WAFs/CDNs (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, F5, ModSecurity, …) from headers/cookies, and observes rate-limiting (HTTP 429) over a small, bounded request burst. |
+| **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
 | **CVE Correlation** (`vulns`) | Matches detected service/library versions against the public **NVD CVE API** and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
-| **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded), and a diff mode comparing two runs for the same target. |
+| **Compliance Checklist** (`compliance`) | Runs last and rolls up all findings into a pass/fail/warn checklist against common baselines (OWASP Secure Headers, basic TLS hygiene, email auth, DNS hygiene, exposure hygiene). Rendered as a dedicated section in the report. |
+| **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded, with the compliance checklist), and a diff mode comparing two runs for the same target. |
+
+All modules are **detection-only**: they identify and report issues and never
+exploit them — no bucket writes, no auth bypass, no SSRF probing, no access of
+discovered credentials or endpoints. The authorization gate applies to every
+module.
 
 Every finding carries a category, a severity (`info` / `low` / `medium` /
 `high`), a target, a description, and structured evidence.
@@ -108,8 +122,56 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | `--nvd-api-key` | NVD API key for higher CVE rate limits |
 | `--i-have-authorization` | **Required** to run headless |
 | `--no-tui` / `--json-only` | Force headless / write JSON only |
+| `--active` | Enable **active probing** (detection-only; sends requests) |
+| `--scope-allow HOSTS` | Comma-separated extra in-scope hosts/domains/CIDRs |
+| `--scope-deny HOSTS` | Comma-separated always-blocked hosts/domains/CIDRs (wins) |
+| `--allow-production` | Acknowledge a production target, silence the warning |
+| `--active-max-concurrency N` | Active-only worker cap (default 8) |
+| `--active-stop-after-errors N` | Auto-stop active probing after N consecutive errors |
 
 Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
+
+---
+
+## Active probing (detection mode)
+
+By default allscan is **passive** — it observes. The opt-in **active** profile
+(`--active`, or the toggle on the TUI settings screen) additionally sends
+requests to *confirm* weaknesses, using benign markers and response/error/timing
+signatures. It is **detection-only**: it identifies and reports, and never
+exploits — no data extraction, no shell, no state change.
+
+```bash
+# passive run (default)
+allscan example.com --i-have-authorization --all
+
+# active, detection-only, with an explicit scope
+allscan example.com --i-have-authorization --all --active \
+    --scope-allow "api.example.com,10.0.0.0/24" \
+    --scope-deny  "payments.example.com"
+```
+
+Checks in this phase: reflected input (XSS sink), open redirect, error-based
+SQL-injection signature, and confirmed directory listing. Each active finding is
+`{type, location, severity, evidence, confidence, note:"manual validation required"}`.
+
+**Hard safety controls (always on for active mode):**
+
+- Gated behind the authorization confirmation **and** the explicit `--active` flag.
+- **Scope-enforced** — every request's host is checked against the target + an
+  allowlist, minus a denylist (denylist wins). Out-of-scope hosts are blocked
+  and logged; nothing is sent to them.
+- **Rate-limited and concurrency-capped**, with a conservative active-only cap.
+- **Kill switch / cancel** — the TUI Stop key and `Ctrl+C` halt probing and save
+  partial results; an **automatic stop condition** halts after a configurable
+  run of consecutive request errors.
+- **Non-destructive by default** with a **production-target warning**
+  (acknowledge with `--allow-production`).
+- Every active request (and every scope block) is written to the audit log.
+
+> Active markers are inert: alphanumeric reflect tokens, a single quote for
+> error-based SQL signatures, and a non-resolvable `.invalid` redirect target.
+> No payload changes server state. Findings still require manual validation.
 
 ---
 
@@ -150,12 +212,16 @@ same results screen with JSON/Markdown/HTML export.
 ```
   Select modules  (↑/↓ move · space toggle · a=all · n=none · enter=continue)
   ┌───────────────────────────────────────────────────────────────────────┐
-  │ [X] Subdomain Discovery                                                 │
-  │ [X] Port/Service Scan                                                   │
-  │ [ ] Web Enumeration                                                     │
+  │ [X] Network/Host Discovery      [X] SSL/TLS Deep Audit                  │
+  │ [X] Subdomain Discovery         [X] Cloud Exposure                      │
+  │ [X] DNS Deep-Dive               [X] WAF/CDN & Rate-limit Detection      │
+  │ [X] Email Security (SPF/…)      [X] CVE Correlation                     │
+  │ [X] Port/Service Scan           [X] Compliance Checklist                │
+  │ [X] Web Enumeration             [X] Active Probing (detection)          │
+  │ [X] API & Tech Fingerprinting                                           │
   │ [X] HTML/Header Analysis                                                │
-  │ [X] CVE Correlation                                                     │
   └───────────────────────────────────────────────────────────────────────┘
+  (Active Probing only sends requests when --active / the settings toggle is on.)
 ```
 
 **3. Settings** — full-port toggle, skip-nmap, OS detection, thread count,
@@ -228,11 +294,21 @@ allscan/
 ├── config.py          defaults, YAML loading, Config dataclass
 ├── models.py          Finding / ScanResult / Severity
 ├── utils.py           rate limiter, audit log, validation, secret scan
+├── netdiscover.py     ping sweep / ARP / traceroute host discovery
 ├── recon.py           subdomain & asset discovery
+├── dnsx.py            DNS deep-dive (records, DNSSEC, cache snooping)
+├── email_sec.py       SPF / DKIM / DMARC posture (registry name: email)
 ├── scan.py            port/service scanning (nmap wrapper + fallback)
 ├── web.py             web enumeration & content discovery
-├── headers.py         HTML source + security header + TLS analysis
+├── fingerprint.py     API endpoint / CMS / framework fingerprinting
+├── headers.py         HTML source + security header analysis
+├── tls.py             SSL/TLS deep audit (protocol matrix, chain, expiry)
+├── cloud.py           cloud bucket + metadata-endpoint exposure
+├── waf.py             WAF/CDN fingerprint + rate-limit observation
+├── scope.py           scope enforcement (allow/deny, out-of-scope blocking)
+├── active.py          active probing (detection-only; gated behind --active)
 ├── vulns.py           informational CVE correlation (NVD)
+├── compliance.py      baseline pass/fail checklist roll-up
 └── report.py          JSON/Markdown/HTML reporting + diff
 tests/                 offline unit tests (no network)
 requirements.txt

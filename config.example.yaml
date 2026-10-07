@@ -14,11 +14,36 @@ os_detection: false    # nmap -O (requires root/Administrator)
 
 # Modules to run by default (TUI/CLI can narrow this) -----------------------
 modules:
+  - netdiscover        # ICMP ping sweep (CIDR), ARP neighbours, traceroute
   - recon              # subdomain & asset discovery
+  - dnsx               # DNS deep-dive: SOA/SRV/CAA/DNSKEY, DNSSEC, cache snoop
+  - email              # SPF / DKIM / DMARC posture
   - scan               # port/service scan
   - web                # web enumeration & content discovery
-  - headers            # HTML source + security header + TLS analysis
-  - vulns              # informational CVE correlation
+  - fingerprint        # API endpoints, CMS + version, framework detection
+  - headers            # HTML source + security header analysis
+  - tls                # SSL/TLS deep audit: protocol matrix, chain, expiry
+  - cloud              # exposed cloud buckets + metadata-endpoint references
+  - waf                # WAF/CDN fingerprint + rate-limit observation
+  - vulns              # informational CVE correlation + misconfigs
+  - compliance         # baseline pass/fail checklist roll-up (runs last)
+
+# Network/host discovery ----------------------------------------------------
+host_discovery_cidr: null   # explicit CIDR for the ping sweep; null -> /24 of target IP
+host_discovery_max: 256     # cap on hosts swept per run
+
+# Active probing (detection-only) -------------------------------------------
+# Active checks SEND requests to CONFIRM weaknesses with benign markers — they
+# never exploit, extract data or alter state. All of this is off by default and
+# additionally requires the authorization gate + the --active flag / TUI toggle.
+active: false                 # master switch (equivalent to --active)
+scope_allow: []               # extra in-scope hosts/domains/CIDRs, e.g. ["api.example.com", "10.0.0.0/24"]
+scope_deny: []                # always-blocked hosts/domains/CIDRs (denylist wins)
+allow_production: false       # acknowledge a production target and silence the warning
+active_max_concurrency: 8     # active-only worker cap (also bounded by `threads`)
+active_max_urls: 25           # cap probed URLs per run
+active_max_params: 6          # cap probed parameters per URL
+active_stop_after_errors: 25  # auto-stop active probing after N consecutive request errors
 
 # Output --------------------------------------------------------------------
 output_dir: allscan-results   # JSON/MD/HTML reports + audit.log land here

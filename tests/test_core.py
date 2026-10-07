@@ -259,6 +259,203 @@ def test_cli_all_flag_forces_full_chain():
     assert config_from_args(args).modules == list(MODULE_ORDER)
 
 
+# --------------------------------------------------------------------------- #
+# expanded modules: offline logic tests
+# --------------------------------------------------------------------------- #
+
+
+def _make_ctx(target="example.test", state=None):
+    """Build an offline ModuleContext (no network, no-op callbacks)."""
+    from allscan.base import ModuleContext
+    from allscan.utils import AuditLog, CancelToken, RateLimiter
+
+    return ModuleContext(
+        target=target,
+        config=Config(rate_limit=0),
+        rate=RateLimiter(0),
+        audit=AuditLog(None),
+        cancel=CancelToken(),
+        state=state if state is not None else {},
+        _log=lambda m, msg: None,
+        _on_finding=lambda f: None,
+        _module_name="test",
+    )
+
+
+def test_registry_order_labels_consistent():
+    from allscan.base import get_registry
+    from allscan.config import MODULE_LABELS
+    from allscan.engine import MODULE_ORDER
+
+    reg = set(get_registry())
+    assert reg == set(MODULE_ORDER) == set(MODULE_LABELS)
+    # compliance must run last so it can roll up everything
+    assert MODULE_ORDER[-1] == "compliance"
+
+
+def test_compliance_evaluate_flags_issues():
+    from allscan.compliance import evaluate, summarize
+
+    findings = [
+        Finding(category=Category.HEADER, title="Missing content-security-policy header"),
+        Finding(category=Category.TLS, title="Deprecated protocol accepted: TLSv1.0 on x",
+                severity=Severity.MEDIUM),
+        Finding(category=Category.EMAIL, title="Missing SPF record", severity=Severity.MEDIUM),
+        Finding(category=Category.CLOUD, title="AWS S3 bucket publicly listable: http://x",
+                severity=Severity.HIGH),
+    ]
+    rows = evaluate(findings)
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["hdr_content-security-policy"]["status"] == "fail"
+    assert by_id["tls_protocols"]["status"] == "fail"
+    assert by_id["email_spf"]["status"] == "fail"
+    assert by_id["exp_bucket"]["status"] == "fail"
+    # a check with no corresponding finding passes
+    assert by_id["dns_axfr"]["status"] == "pass"
+    counts = summarize(rows)
+    assert counts["fail"] >= 4
+
+
+def test_compliance_module_reads_prior_findings():
+    from allscan.compliance import ComplianceModule
+
+    result = ScanResult(target="example.test")
+    result.add(Finding(category=Category.EMAIL, title="Missing DMARC record",
+                       severity=Severity.MEDIUM))
+    ctx = _make_ctx(state={"_result": result})
+    out = ComplianceModule().run(ctx)
+    # summary finding + at least the DMARC fail line
+    assert any(f.category == Category.COMPLIANCE and "checklist" in f.title.lower()
+               for f in out)
+    assert ctx.state.get("compliance")  # stashed for the report
+    assert any(r["id"] == "email_dmarc" and r["status"] == "fail"
+               for r in ctx.state["compliance"])
+
+
+def test_cloud_extract_buckets():
+    from allscan.cloud import CloudModule
+
+    corpus = (
+        "see https://my-bucket.s3.amazonaws.com/ and "
+        "https://assets.s3.eu-west-1.amazonaws.com/x.png and "
+        "https://acct.blob.core.windows.net/container and "
+        "https://storage.googleapis.com/gcs-bucket/file"
+    )
+    buckets = CloudModule()._extract_buckets(corpus)
+    providers = {p for p, _ in buckets}
+    assert "AWS S3" in providers
+    assert "Azure Blob" in providers
+    assert "Google Cloud Storage" in providers
+
+
+def test_waf_fingerprint_detects_cloudflare():
+    from allscan.waf import WafModule
+
+    ctx = _make_ctx()
+    out = WafModule()._fingerprint(ctx, {"Server": "cloudflare", "CF-RAY": "abc123"})
+    assert any("Cloudflare" in f.title for f in out)
+
+
+def test_fingerprint_cms_detects_wordpress_version():
+    from allscan.fingerprint import FingerprintModule
+
+    ctx = _make_ctx()
+    body = '<meta name="generator" content="WordPress 5.8.1" /> /wp-content/ wp-json'
+    out = FingerprintModule()._cms(ctx, "https://example.test", "", body)
+    assert any("WordPress" in f.title and "5.8.1" in f.title for f in out)
+    # version-bearing CMS feeds CVE correlation
+    assert any(s["product"] == "WordPress" and s["version"] == "5.8.1"
+               for s in ctx.state.get("services", []))
+
+
+def test_report_includes_compliance_section():
+    r = ScanResult(target="example.test")
+    r.add(Finding(category=Category.HEADER, title="Missing content-security-policy header"))
+    r.meta = {"compliance": [
+        {"id": "hdr_csp", "name": "Content-Security-Policy",
+         "baseline": "OWASP Secure Headers", "status": "fail", "detail": "Header missing."},
+        {"id": "tls_chain", "name": "Valid certificate chain",
+         "baseline": "TLS hygiene", "status": "pass", "detail": "OK."},
+    ]}
+    md = report.to_markdown(r)
+    html = report.to_html(r)
+    assert "Compliance Checklist" in md and "Content-Security-Policy" in md
+    assert "compliance checklist" in html and "FAIL" in html
+
+
+# --------------------------------------------------------------------------- #
+# active probing + scope enforcement (offline)
+# --------------------------------------------------------------------------- #
+
+
+def test_scope_guard_in_out_and_deny():
+    from allscan.scope import ScopeGuard
+
+    g = ScopeGuard("10.0.0.5", allow=["10.0.1.0/24", "app.example.com"],
+                   deny=["10.0.1.9"])
+    assert g.check("10.0.0.5") is True            # the target itself
+    assert g.check("10.0.1.50") is True           # allow CIDR
+    assert g.check("10.0.1.9") is False           # denylist wins over allow CIDR
+    assert g.check("app.example.com") is True     # allow host (exact)
+    assert g.check("sub.app.example.com") is True # subdomain of allowed domain
+    assert g.check("8.8.8.8") is False            # out of scope
+    assert g.check("evil.com") is False           # out of scope
+    d = g.decide("8.8.8.8")
+    assert d.allowed is False and "out of scope" in d.reason
+
+
+def test_scope_guard_production_heuristic():
+    from allscan.scope import ScopeGuard
+
+    assert ScopeGuard("127.0.0.1").looks_production() is False
+    assert ScopeGuard("lab.test").looks_production() is False  # lab suffix
+
+
+def test_active_module_gated_off_by_default():
+    from allscan.active import ActiveModule
+
+    ctx = _make_ctx()  # Config() => active is False
+    assert ctx.config.active is False
+    out = ActiveModule().run(ctx)
+    assert len(out) == 1
+    assert out[0].category == Category.ACTIVE
+    assert "disabled" in out[0].title.lower()
+
+
+def test_active_finding_schema_roundtrip():
+    from allscan.active import ActiveModule
+
+    f = ActiveModule()._finding(
+        "reflected-input", "http://x/?a=1 [param=a]", Severity.LOW,
+        evidence={"param": "a"}, confidence="medium",
+        title="Reflected input observed", description="benign marker reflected",
+    )
+    assert f.category == Category.ACTIVE
+    assert f.location.startswith("http://x")
+    assert f.target == "http://x/?a=1"
+    assert f.confidence == "medium"
+    assert f.note == "manual validation required"
+    assert f.evidence["type"] == "reflected-input"
+    # the schema fields survive JSON round-trip
+    back = Finding.from_dict(f.to_dict())
+    assert back.location == f.location
+    assert back.confidence == "medium"
+    assert back.note == "manual validation required"
+
+
+def test_config_active_defaults_off_and_cli_enables():
+    from allscan.main import build_parser, config_from_args
+
+    cfg = config_from_args(build_parser().parse_args(["example.test"]))
+    assert cfg.active is False
+    cfg2 = config_from_args(build_parser().parse_args(
+        ["example.test", "--active", "--scope-allow", "a.com,10.0.0.0/24",
+         "--scope-deny", "secret.example.com"]))
+    assert cfg2.active is True
+    assert "a.com" in cfg2.scope_allow and "10.0.0.0/24" in cfg2.scope_allow
+    assert "secret.example.com" in cfg2.scope_deny
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""

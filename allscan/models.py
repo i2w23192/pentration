@@ -41,28 +41,42 @@ class Severity(enum.Enum):
 # Logical grouping for the results screen. Kept as plain strings so new
 # modules can introduce categories without touching an enum.
 class Category:
+    NETWORK = "network"         # host discovery, ping sweep, traceroute, ARP
     SUBDOMAIN = "subdomains"
-    DNS = "dns"
+    DNS = "dns"                 # DNS records, DNSSEC, cache snooping
+    EMAIL = "email"             # SPF / DKIM / DMARC posture
     PORT = "ports"
     SERVICE = "services"
     WEB = "web"
     HEADER = "headers"
     HTML = "html"
-    TLS = "tls"
+    TLS = "tls"                 # cert chain, expiry, protocol matrix
+    FINGERPRINT = "fingerprint"  # API endpoints, CMS, framework detection
+    CLOUD = "cloud"             # exposed buckets, metadata endpoints
+    WAF = "waf"                 # WAF/CDN and rate-limit observations
     CVE = "cves"
     MISCONFIG = "misconfigs"
+    ACTIVE = "active"           # active-probing detections (confirm, not exploit)
+    COMPLIANCE = "compliance"   # baseline pass/fail checklist roll-up
 
     ALL = (
+        NETWORK,
         SUBDOMAIN,
         DNS,
+        EMAIL,
         PORT,
         SERVICE,
         WEB,
         HEADER,
         HTML,
         TLS,
+        FINGERPRINT,
+        CLOUD,
+        WAF,
         CVE,
         MISCONFIG,
+        ACTIVE,
+        COMPLIANCE,
     )
 
 
@@ -81,6 +95,11 @@ class Finding:
     description: str = ""
     evidence: dict[str, Any] = field(default_factory=dict)
     module: str = ""
+    # Active-probing schema fields (optional; blank for passive findings so
+    # existing modules and serialized runs are unaffected).
+    location: str = ""      # where the weakness was observed (URL/param/header)
+    confidence: str = ""    # "low" | "medium" | "high" (active detections)
+    note: str = ""          # e.g. "manual validation required"
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     timestamp: float = field(default_factory=time.time)
 
@@ -94,6 +113,9 @@ class Finding:
             "description": self.description,
             "evidence": self.evidence,
             "module": self.module,
+            "location": self.location,
+            "confidence": self.confidence,
+            "note": self.note,
             "timestamp": self.timestamp,
         }
 
@@ -108,6 +130,9 @@ class Finding:
             description=data.get("description", ""),
             evidence=data.get("evidence", {}) or {},
             module=data.get("module", ""),
+            location=data.get("location", ""),
+            confidence=data.get("confidence", ""),
+            note=data.get("note", ""),
             timestamp=data.get("timestamp", time.time()),
         )
 

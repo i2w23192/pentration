@@ -121,6 +121,25 @@ def to_markdown(result: ScanResult) -> str:
     lines.append(f"| **Total** | **{len(result.findings)}** |")
     lines.append("")
 
+    checklist = (result.meta or {}).get("compliance") or []
+    if checklist:
+        passes = sum(1 for r in checklist if r.get("status") == "pass")
+        fails = sum(1 for r in checklist if r.get("status") == "fail")
+        warns = sum(1 for r in checklist if r.get("status") == "warn")
+        lines.append("## Compliance Checklist")
+        lines.append("")
+        lines.append(f"**{passes} pass · {fails} fail · {warns} warn**")
+        lines.append("")
+        lines.append("| Status | Check | Baseline | Detail |")
+        lines.append("| --- | --- | --- | --- |")
+        icon = {"pass": "✅ pass", "fail": "❌ fail", "warn": "⚠️ warn", "n/a": "— n/a"}
+        for r in checklist:
+            lines.append(
+                f"| {icon.get(r.get('status'), r.get('status'))} | {r.get('name')} "
+                f"| {r.get('baseline')} | {r.get('detail')} |"
+            )
+        lines.append("")
+
     grouped = result.by_category()
     for category in sorted(grouped.keys()):
         findings = grouped[category]
@@ -129,10 +148,16 @@ def to_markdown(result: ScanResult) -> str:
         for f in findings:
             badge = f"`{f.severity.value.upper()}`"
             lines.append(f"### {badge} {f.title}")
-            if f.target:
+            if f.location:
+                lines.append(f"*Location:* `{f.location}`  ")
+            elif f.target:
                 lines.append(f"*Target:* `{f.target}`  ")
+            if f.confidence:
+                lines.append(f"*Confidence:* {f.confidence}  ")
             if f.description:
                 lines.append(f.description)
+            if f.note:
+                lines.append(f"> ⚠ {f.note}")
             if f.evidence:
                 lines.append("")
                 lines.append("```json")
@@ -191,8 +216,10 @@ def to_html(result: ScanResult) -> str:
             <span class="ftitle">{esc(f.title)}</span>
           </summary>
           <div class="fbody">
-            {f'<div class="target">target: <code>{esc(f.target)}</code></div>' if f.target else ''}
+            {f'<div class="target">location: <code>{esc(f.location)}</code></div>' if f.location else (f'<div class="target">target: <code>{esc(f.target)}</code></div>' if f.target else '')}
+            {f'<div class="target">confidence: {esc(f.confidence)}</div>' if f.confidence else ''}
             {f'<p>{esc(f.description)}</p>' if f.description else ''}
+            {f'<p class="note">⚠ {esc(f.note)}</p>' if f.note else ''}
             {evidence}
           </div>
         </details>"""
@@ -201,6 +228,35 @@ def to_html(result: ScanResult) -> str:
             f'<section><h2>{esc(category)} <small>({len(grouped[category])})</small></h2>'
             + "".join(items)
             + "</section>"
+        )
+
+    # compliance checklist section
+    checklist = (result.meta or {}).get("compliance") or []
+    compliance_html = ""
+    if checklist:
+        status_color = {"pass": "#3fb950", "fail": "#e5484d", "warn": "#f5a623", "n/a": "#8b949e"}
+        rows_html = []
+        for r in checklist:
+            st = r.get("status", "")
+            rows_html.append(
+                f"<tr>"
+                f'<td><span class="cbadge" style="background:{status_color.get(st, "#8b949e")}">'
+                f"{esc(st.upper())}</span></td>"
+                f"<td>{esc(r.get('name'))}</td>"
+                f"<td class=\"cbaseline\">{esc(r.get('baseline'))}</td>"
+                f"<td class=\"cdetail\">{esc(r.get('detail'))}</td>"
+                f"</tr>"
+            )
+        passes = sum(1 for r in checklist if r.get("status") == "pass")
+        fails = sum(1 for r in checklist if r.get("status") == "fail")
+        warns = sum(1 for r in checklist if r.get("status") == "warn")
+        compliance_html = (
+            '<section><h2>compliance checklist '
+            f"<small>({passes} pass · {fails} fail · {warns} warn)</small></h2>"
+            '<table class="checklist"><thead><tr><th>Status</th><th>Check</th>'
+            "<th>Baseline</th><th>Detail</th></tr></thead><tbody>"
+            + "".join(rows_html)
+            + "</tbody></table></section>"
         )
 
     body_sections = "\n".join(sections)
@@ -240,6 +296,16 @@ def to_html(result: ScanResult) -> str:
   .warn {{ background:#3d1d1d; border:1px solid #e5484d; color:#ffb3b3;
           padding:.6rem .9rem; border-radius:6px; margin:1rem 0; }}
   footer {{ margin-top:2rem; color:#8b949e; font-size:.8rem; }}
+  table.checklist {{ width:100%; border-collapse:collapse; font-size:.85rem; }}
+  table.checklist th {{ text-align:left; color:#8b949e; border-bottom:1px solid #21262d;
+                        padding:.35rem .5rem; }}
+  table.checklist td {{ padding:.35rem .5rem; border-bottom:1px solid #161b22;
+                        vertical-align:top; }}
+  .cbadge {{ padding:.1rem .45rem; border-radius:6px; color:#0d1117; font-weight:700;
+            font-size:.72rem; }}
+  .cbaseline {{ color:#8b949e; white-space:nowrap; }}
+  .cdetail {{ color:#9ecbff; }}
+  .note {{ color:#ffcf99; font-size:.85rem; }}
 </style>
 </head>
 <body>
@@ -251,6 +317,7 @@ def to_html(result: ScanResult) -> str:
   </div>
   {partial}
   <div class="pills">{pills}</div>
+  {compliance_html}
   {body_sections}
   <footer>Generated by allscan — for authorized security testing only.</footer>
 </body>
