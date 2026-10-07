@@ -22,12 +22,25 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 
 | Module | What it does |
 | --- | --- |
+| **Network/Host Discovery** (`netdiscover`) | ICMP ping sweep across a CIDR (defaults to the /24 of the resolved target), read-only ARP neighbour listing, and traceroute hop listing. Shells out to standard tools and degrades gracefully when ICMP/raw sockets are unavailable. |
 | **Subdomain Discovery** (`recon`) | Passive: crt.sh certificate transparency, DNS records (A/AAAA/MX/TXT/NS/CNAME/SOA), reverse PTR. Active: async wordlist brute force, AXFR zone-transfer attempts. Flags wildcard DNS and filters its noise. |
+| **DNS Deep-Dive** (`dnsx`) | Full record dump (SOA, NS, CAA, DNSKEY, DS, TXT, SRV service probes), DNSSEC presence/validation check (DNSKEY + AD flag), and informational DNS cache-snooping detection. Flags missing CAA and unsigned zones. |
+| **Email Security** (`email`) | SPF, DKIM (common-selector probe) and DMARC presence + basic validity. Flags missing records, permissive SPF (`+all`/`?all`) and monitor-only DMARC (`p=none`). |
 | **Port/Service Scan** (`scan`) | Wraps `nmap` (top-1000 by default, full 65535 optional, `-sV` version detection, optional `-O` OS detection). Falls back to a built-in concurrent connect scanner + banner grabber when nmap is unavailable or skipped. Flags sensitive exposed services (Redis, Mongo, Docker API, …). |
 | **Web Enumeration** (`web`) | HTTP/HTTPS probing of every discovered host (status, title, tech fingerprint), plus content brute forcing for sensitive paths (`.git/`, `.env`, backups, config files, actuators, admin panels) and directory-listing detection. |
-| **HTML/Header Analysis** (`headers`) | Security-header audit (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), verbose-header and cookie-flag checks, TLS protocol/cipher/cert inspection, and HTML source analysis (exposed comments, credential-shaped strings, internal paths, outdated JS libraries, risky inline JS). |
+| **API & Tech Fingerprinting** (`fingerprint`) | Probes common API/doc endpoints (`/api`, `/graphql`, swagger/openapi), CMS detection with version (WordPress, Drupal, Joomla, Magento, …), and server-side framework / front-end library fingerprinting. Version-bearing hits feed CVE correlation. |
+| **HTML/Header Analysis** (`headers`) | Security-header audit (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), verbose-header and cookie-flag checks, and HTML source analysis (exposed comments, credential-shaped strings, internal paths, outdated JS libraries, risky inline JS). |
+| **SSL/TLS Deep Audit** (`tls`) | Protocol support matrix (SSLv3 / TLS 1.0–1.3 accepted?), full certificate-chain validation against the system trust store, and certificate-expiry warnings. Flags deprecated protocols. |
+| **Cloud Exposure** (`cloud`) | Detects cloud-storage bucket references (S3, Azure Blob, GCS) in subdomains/HTML and classifies each as publicly listable / private / absent with a single bucket-root request (no object access). Flags cloud metadata-endpoint references (SSRF sinks) — reference only, never probed. |
+| **WAF/CDN & Rate-limit Detection** (`waf`) | Fingerprints WAFs/CDNs (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, F5, ModSecurity, …) from headers/cookies, and observes rate-limiting (HTTP 429) over a small, bounded request burst. |
 | **CVE Correlation** (`vulns`) | Matches detected service/library versions against the public **NVD CVE API** and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
-| **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded), and a diff mode comparing two runs for the same target. |
+| **Compliance Checklist** (`compliance`) | Runs last and rolls up all findings into a pass/fail/warn checklist against common baselines (OWASP Secure Headers, basic TLS hygiene, email auth, DNS hygiene, exposure hygiene). Rendered as a dedicated section in the report. |
+| **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded, with the compliance checklist), and a diff mode comparing two runs for the same target. |
+
+All modules are **detection-only**: they identify and report issues and never
+exploit them — no bucket writes, no auth bypass, no SSRF probing, no access of
+discovered credentials or endpoints. The authorization gate applies to every
+module.
 
 Every finding carries a category, a severity (`info` / `low` / `medium` /
 `high`), a target, a description, and structured evidence.
@@ -150,11 +163,14 @@ same results screen with JSON/Markdown/HTML export.
 ```
   Select modules  (↑/↓ move · space toggle · a=all · n=none · enter=continue)
   ┌───────────────────────────────────────────────────────────────────────┐
-  │ [X] Subdomain Discovery                                                 │
-  │ [X] Port/Service Scan                                                   │
-  │ [ ] Web Enumeration                                                     │
+  │ [X] Network/Host Discovery      [X] SSL/TLS Deep Audit                  │
+  │ [X] Subdomain Discovery         [X] Cloud Exposure                      │
+  │ [X] DNS Deep-Dive               [X] WAF/CDN & Rate-limit Detection      │
+  │ [X] Email Security (SPF/…)      [X] CVE Correlation                     │
+  │ [X] Port/Service Scan           [X] Compliance Checklist                │
+  │ [X] Web Enumeration                                                     │
+  │ [X] API & Tech Fingerprinting                                           │
   │ [X] HTML/Header Analysis                                                │
-  │ [X] CVE Correlation                                                     │
   └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -228,11 +244,19 @@ allscan/
 ├── config.py          defaults, YAML loading, Config dataclass
 ├── models.py          Finding / ScanResult / Severity
 ├── utils.py           rate limiter, audit log, validation, secret scan
+├── netdiscover.py     ping sweep / ARP / traceroute host discovery
 ├── recon.py           subdomain & asset discovery
+├── dnsx.py            DNS deep-dive (records, DNSSEC, cache snooping)
+├── email_sec.py       SPF / DKIM / DMARC posture (registry name: email)
 ├── scan.py            port/service scanning (nmap wrapper + fallback)
 ├── web.py             web enumeration & content discovery
-├── headers.py         HTML source + security header + TLS analysis
+├── fingerprint.py     API endpoint / CMS / framework fingerprinting
+├── headers.py         HTML source + security header analysis
+├── tls.py             SSL/TLS deep audit (protocol matrix, chain, expiry)
+├── cloud.py           cloud bucket + metadata-endpoint exposure
+├── waf.py             WAF/CDN fingerprint + rate-limit observation
 ├── vulns.py           informational CVE correlation (NVD)
+├── compliance.py      baseline pass/fail checklist roll-up
 └── report.py          JSON/Markdown/HTML reporting + diff
 tests/                 offline unit tests (no network)
 requirements.txt

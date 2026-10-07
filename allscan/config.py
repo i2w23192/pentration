@@ -32,7 +32,12 @@ DEFAULTS: dict[str, Any] = {
     "full_ports": False,          # scan all 65535 ports
     "skip_nmap": False,           # skip nmap, fall back to banner grabbing
     "os_detection": False,        # nmap -O (needs privileges)
-    "modules": ["recon", "scan", "web", "headers", "vulns"],
+    "modules": [
+        "netdiscover", "recon", "dnsx", "email", "scan", "web",
+        "fingerprint", "headers", "tls", "cloud", "waf", "vulns", "compliance",
+    ],
+    "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
+    "host_discovery_max": 256,     # cap hosts swept in one run
     "output_dir": "allscan-results",
     "wordlist_subdomains": None,  # path; None -> built-in small list
     "wordlist_web": None,         # path; None -> built-in small list
@@ -45,11 +50,19 @@ DEFAULTS: dict[str, Any] = {
 }
 
 MODULE_LABELS = {
+    "netdiscover": "Network/Host Discovery",
     "recon": "Subdomain Discovery",
+    "dnsx": "DNS Deep-Dive",
+    "email": "Email Security (SPF/DKIM/DMARC)",
     "scan": "Port/Service Scan",
     "web": "Web Enumeration",
+    "fingerprint": "API & Tech Fingerprinting",
     "headers": "HTML/Header Analysis",
+    "tls": "SSL/TLS Deep Audit",
+    "cloud": "Cloud Exposure",
+    "waf": "WAF/CDN & Rate-limit Detection",
     "vulns": "CVE Correlation",
+    "compliance": "Compliance Checklist",
 }
 
 
@@ -71,6 +84,8 @@ class Config:
     max_subdomains_bruteforce: int = DEFAULTS["max_subdomains_bruteforce"]
     follow_redirects: bool = DEFAULTS["follow_redirects"]
     verify_tls: bool = DEFAULTS["verify_tls"]
+    host_discovery_cidr: Optional[str] = DEFAULTS["host_discovery_cidr"]
+    host_discovery_max: int = DEFAULTS["host_discovery_max"]
 
     # --- construction helpers --------------------------------------------
     @classmethod

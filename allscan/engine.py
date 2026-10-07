@@ -23,7 +23,21 @@ from allscan.utils import AuditLog, CancelToken, RateLimiter, ScanCancelled
 
 # Modules must run in this order because later ones consume earlier state
 # (recon -> hosts, scan/web -> services/pages, vulns -> CVE correlation).
-MODULE_ORDER = ["recon", "scan", "web", "headers", "vulns"]
+MODULE_ORDER = [
+    "netdiscover",   # host discovery / ping sweep / traceroute
+    "recon",         # subdomain & asset discovery
+    "dnsx",          # DNS deep-dive (records, DNSSEC, cache snooping)
+    "email",         # SPF / DKIM / DMARC posture
+    "scan",          # port/service scan
+    "web",           # web enumeration & content discovery
+    "fingerprint",   # API & technology/CMS fingerprinting
+    "headers",       # HTML source + security header analysis
+    "tls",           # SSL/TLS deep audit
+    "cloud",         # cloud bucket / metadata exposure
+    "waf",           # WAF/CDN & rate-limit detection
+    "vulns",         # informational CVE correlation + misconfigs
+    "compliance",    # baseline pass/fail checklist roll-up (must be last)
+]
 
 StatusFn = Callable[[str, str], None]  # (module_name, status) status in {queued,running,done,error,cancelled}
 
@@ -71,7 +85,9 @@ class Engine:
     def run(self) -> ScanResult:
         registry = get_registry()
         order = self.selected_modules()
-        shared_state: dict = {}
+        # Expose the growing result so the (last-running) compliance module can
+        # roll up every prior finding. Modules only read it.
+        shared_state: dict = {"_result": self.result}
 
         with AuditLog(self.audit_path) as audit:
             audit.record("scan_start", self.target, config=self.config.to_dict())
@@ -119,6 +135,7 @@ class Engine:
             self.result.meta = {
                 "hosts": list((shared_state.get("hosts") or {}).keys()),
                 "services": shared_state.get("services", []),
+                "compliance": shared_state.get("compliance", []),
             }
             audit.record("scan_end", self.target, partial=self.result.partial,
                          findings=len(self.result.findings))

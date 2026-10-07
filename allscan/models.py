@@ -41,28 +41,40 @@ class Severity(enum.Enum):
 # Logical grouping for the results screen. Kept as plain strings so new
 # modules can introduce categories without touching an enum.
 class Category:
+    NETWORK = "network"         # host discovery, ping sweep, traceroute, ARP
     SUBDOMAIN = "subdomains"
-    DNS = "dns"
+    DNS = "dns"                 # DNS records, DNSSEC, cache snooping
+    EMAIL = "email"             # SPF / DKIM / DMARC posture
     PORT = "ports"
     SERVICE = "services"
     WEB = "web"
     HEADER = "headers"
     HTML = "html"
-    TLS = "tls"
+    TLS = "tls"                 # cert chain, expiry, protocol matrix
+    FINGERPRINT = "fingerprint"  # API endpoints, CMS, framework detection
+    CLOUD = "cloud"             # exposed buckets, metadata endpoints
+    WAF = "waf"                 # WAF/CDN and rate-limit observations
     CVE = "cves"
     MISCONFIG = "misconfigs"
+    COMPLIANCE = "compliance"   # baseline pass/fail checklist roll-up
 
     ALL = (
+        NETWORK,
         SUBDOMAIN,
         DNS,
+        EMAIL,
         PORT,
         SERVICE,
         WEB,
         HEADER,
         HTML,
         TLS,
+        FINGERPRINT,
+        CLOUD,
+        WAF,
         CVE,
         MISCONFIG,
+        COMPLIANCE,
     )
 
 

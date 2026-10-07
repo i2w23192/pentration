@@ -14,11 +14,23 @@ os_detection: false    # nmap -O (requires root/Administrator)
 
 # Modules to run by default (TUI/CLI can narrow this) -----------------------
 modules:
+  - netdiscover        # ICMP ping sweep (CIDR), ARP neighbours, traceroute
   - recon              # subdomain & asset discovery
+  - dnsx               # DNS deep-dive: SOA/SRV/CAA/DNSKEY, DNSSEC, cache snoop
+  - email              # SPF / DKIM / DMARC posture
   - scan               # port/service scan
   - web                # web enumeration & content discovery
-  - headers            # HTML source + security header + TLS analysis
-  - vulns              # informational CVE correlation
+  - fingerprint        # API endpoints, CMS + version, framework detection
+  - headers            # HTML source + security header analysis
+  - tls                # SSL/TLS deep audit: protocol matrix, chain, expiry
+  - cloud              # exposed cloud buckets + metadata-endpoint references
+  - waf                # WAF/CDN fingerprint + rate-limit observation
+  - vulns              # informational CVE correlation + misconfigs
+  - compliance         # baseline pass/fail checklist roll-up (runs last)
+
+# Network/host discovery ----------------------------------------------------
+host_discovery_cidr: null   # explicit CIDR for the ping sweep; null -> /24 of target IP
+host_discovery_max: 256     # cap on hosts swept per run
 
 # Output --------------------------------------------------------------------
 output_dir: allscan-results   # JSON/MD/HTML reports + audit.log land here

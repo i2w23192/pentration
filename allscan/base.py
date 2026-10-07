@@ -74,17 +74,33 @@ def get_registry() -> dict[str, "Module"]:
 
     Imported lazily to avoid import cycles (modules import :mod:`base`).
     """
+    from allscan.netdiscover import NetDiscoverModule
     from allscan.recon import ReconModule
+    from allscan.dnsx import DnsxModule
+    from allscan.email_sec import EmailModule
     from allscan.scan import ScanModule
     from allscan.web import WebModule
+    from allscan.fingerprint import FingerprintModule
     from allscan.headers import HeadersModule
+    from allscan.tls import TlsModule
+    from allscan.cloud import CloudModule
+    from allscan.waf import WafModule
     from allscan.vulns import VulnsModule
+    from allscan.compliance import ComplianceModule
 
     instances = [
+        NetDiscoverModule(),
         ReconModule(),
+        DnsxModule(),
+        EmailModule(),
         ScanModule(),
         WebModule(),
+        FingerprintModule(),
         HeadersModule(),
+        TlsModule(),
+        CloudModule(),
+        WafModule(),
         VulnsModule(),
+        ComplianceModule(),
     ]
     return {m.name: m for m in instances}

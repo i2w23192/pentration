@@ -259,6 +259,130 @@ def test_cli_all_flag_forces_full_chain():
     assert config_from_args(args).modules == list(MODULE_ORDER)
 
 
+# --------------------------------------------------------------------------- #
+# expanded modules: offline logic tests
+# --------------------------------------------------------------------------- #
+
+
+def _make_ctx(target="example.test", state=None):
+    """Build an offline ModuleContext (no network, no-op callbacks)."""
+    from allscan.base import ModuleContext
+    from allscan.utils import AuditLog, CancelToken, RateLimiter
+
+    return ModuleContext(
+        target=target,
+        config=Config(rate_limit=0),
+        rate=RateLimiter(0),
+        audit=AuditLog(None),
+        cancel=CancelToken(),
+        state=state if state is not None else {},
+        _log=lambda m, msg: None,
+        _on_finding=lambda f: None,
+        _module_name="test",
+    )
+
+
+def test_registry_order_labels_consistent():
+    from allscan.base import get_registry
+    from allscan.config import MODULE_LABELS
+    from allscan.engine import MODULE_ORDER
+
+    reg = set(get_registry())
+    assert reg == set(MODULE_ORDER) == set(MODULE_LABELS)
+    # compliance must run last so it can roll up everything
+    assert MODULE_ORDER[-1] == "compliance"
+
+
+def test_compliance_evaluate_flags_issues():
+    from allscan.compliance import evaluate, summarize
+
+    findings = [
+        Finding(category=Category.HEADER, title="Missing content-security-policy header"),
+        Finding(category=Category.TLS, title="Deprecated protocol accepted: TLSv1.0 on x",
+                severity=Severity.MEDIUM),
+        Finding(category=Category.EMAIL, title="Missing SPF record", severity=Severity.MEDIUM),
+        Finding(category=Category.CLOUD, title="AWS S3 bucket publicly listable: http://x",
+                severity=Severity.HIGH),
+    ]
+    rows = evaluate(findings)
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["hdr_content-security-policy"]["status"] == "fail"
+    assert by_id["tls_protocols"]["status"] == "fail"
+    assert by_id["email_spf"]["status"] == "fail"
+    assert by_id["exp_bucket"]["status"] == "fail"
+    # a check with no corresponding finding passes
+    assert by_id["dns_axfr"]["status"] == "pass"
+    counts = summarize(rows)
+    assert counts["fail"] >= 4
+
+
+def test_compliance_module_reads_prior_findings():
+    from allscan.compliance import ComplianceModule
+
+    result = ScanResult(target="example.test")
+    result.add(Finding(category=Category.EMAIL, title="Missing DMARC record",
+                       severity=Severity.MEDIUM))
+    ctx = _make_ctx(state={"_result": result})
+    out = ComplianceModule().run(ctx)
+    # summary finding + at least the DMARC fail line
+    assert any(f.category == Category.COMPLIANCE and "checklist" in f.title.lower()
+               for f in out)
+    assert ctx.state.get("compliance")  # stashed for the report
+    assert any(r["id"] == "email_dmarc" and r["status"] == "fail"
+               for r in ctx.state["compliance"])
+
+
+def test_cloud_extract_buckets():
+    from allscan.cloud import CloudModule
+
+    corpus = (
+        "see https://my-bucket.s3.amazonaws.com/ and "
+        "https://assets.s3.eu-west-1.amazonaws.com/x.png and "
+        "https://acct.blob.core.windows.net/container and "
+        "https://storage.googleapis.com/gcs-bucket/file"
+    )
+    buckets = CloudModule()._extract_buckets(corpus)
+    providers = {p for p, _ in buckets}
+    assert "AWS S3" in providers
+    assert "Azure Blob" in providers
+    assert "Google Cloud Storage" in providers
+
+
+def test_waf_fingerprint_detects_cloudflare():
+    from allscan.waf import WafModule
+
+    ctx = _make_ctx()
+    out = WafModule()._fingerprint(ctx, {"Server": "cloudflare", "CF-RAY": "abc123"})
+    assert any("Cloudflare" in f.title for f in out)
+
+
+def test_fingerprint_cms_detects_wordpress_version():
+    from allscan.fingerprint import FingerprintModule
+
+    ctx = _make_ctx()
+    body = '<meta name="generator" content="WordPress 5.8.1" /> /wp-content/ wp-json'
+    out = FingerprintModule()._cms(ctx, "https://example.test", "", body)
+    assert any("WordPress" in f.title and "5.8.1" in f.title for f in out)
+    # version-bearing CMS feeds CVE correlation
+    assert any(s["product"] == "WordPress" and s["version"] == "5.8.1"
+               for s in ctx.state.get("services", []))
+
+
+def test_report_includes_compliance_section():
+    r = ScanResult(target="example.test")
+    r.add(Finding(category=Category.HEADER, title="Missing content-security-policy header"))
+    r.meta = {"compliance": [
+        {"id": "hdr_csp", "name": "Content-Security-Policy",
+         "baseline": "OWASP Secure Headers", "status": "fail", "detail": "Header missing."},
+        {"id": "tls_chain", "name": "Valid certificate chain",
+         "baseline": "TLS hygiene", "status": "pass", "detail": "OK."},
+    ]}
+    md = report.to_markdown(r)
+    html = report.to_html(r)
+    assert "Compliance Checklist" in md and "Content-Security-Policy" in md
+    assert "compliance checklist" in html and "FAIL" in html
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""
