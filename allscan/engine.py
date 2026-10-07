@@ -27,6 +27,9 @@ MODULE_ORDER = [
     "netdiscover",   # host discovery / ping sweep / traceroute
     "recon",         # subdomain & asset discovery
     "dnsx",          # DNS deep-dive (records, DNSSEC, cache snooping)
+    "whois",         # WHOIS / RDAP registration data
+    "asn",           # ASN / IP-range / BGP prefix attribution
+    "certs",         # certificate discovery + CT-log monitoring
     "email",         # SPF / DKIM / DMARC posture
     "scan",          # port/service scan
     "web",           # web enumeration & content discovery
@@ -38,6 +41,7 @@ MODULE_ORDER = [
     "active",        # active probing (detection-only; gated behind --active)
     "vulns",         # informational CVE correlation + misconfigs
     "exploitrefs",   # exploit REFERENCES + KEV/EPSS enrichment (no payloads)
+    "surface",       # attack-surface + infra-relationship roll-up
     "compliance",    # baseline pass/fail checklist roll-up (must be last)
 ]
 
@@ -138,6 +142,7 @@ class Engine:
                 "hosts": list((shared_state.get("hosts") or {}).keys()),
                 "services": shared_state.get("services", []),
                 "compliance": shared_state.get("compliance", []),
+                "surface": shared_state.get("surface", {}),
             }
             audit.record("scan_end", self.target, partial=self.result.partial,
                          findings=len(self.result.findings))

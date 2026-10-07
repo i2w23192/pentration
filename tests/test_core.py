@@ -562,6 +562,77 @@ def test_pdf_report_generates(tmp_path):
     assert path.read_bytes()[:4] == b"%PDF"
 
 
+# --------------------------------------------------------------------------- #
+# phase 2: recon depth (whois / asn / certs / surface) — offline
+# --------------------------------------------------------------------------- #
+
+
+def test_whois_date_flags_expiring_and_recent():
+    import datetime
+    from allscan.whois_rdap import WhoisModule, _parse_dt
+
+    assert _parse_dt("2020-01-02T00:00:00Z") is not None
+    ctx = _make_ctx(target="x.test")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    soon = (now + datetime.timedelta(days=5)).isoformat()
+    recent = (now - datetime.timedelta(days=10)).isoformat()
+    flags = WhoisModule()._date_flags(ctx, recent, soon)
+    titles = " ".join(f.title.lower() for f in flags)
+    assert "expires in" in titles
+    assert "recently registered" in titles
+
+
+def test_asn_lookup_ip_parses_cymru(monkeypatch):
+    from allscan.asn import AsnModule
+
+    m = AsnModule()
+    # stub the DNS TXT call: origin lookup returns Cymru-format string
+    monkeypatch.setattr(AsnModule, "_txt",
+                        lambda self, ctx, resolver, name: "15169 | 8.8.8.0/24 | US | arin | 1992-12-01")
+    ctx = _make_ctx()
+    info = m._lookup_ip(ctx, None, "8.8.8.8")
+    assert info["asn"] == "15169"
+    assert info["prefix"] == "8.8.8.0/24"
+
+
+def test_certs_ct_diff_baseline_then_new(tmp_path):
+    from allscan.certs import CertsModule
+
+    ctx = _make_ctx(target="x.test")
+    ctx.config.output_dir = str(tmp_path)
+    m = CertsModule()
+    # first run: saves baseline, no diff finding
+    first = m._ct_diff(ctx, {"1", "2"})
+    assert first == []
+    # second run with a new cert id: flags it
+    second = m._ct_diff(ctx, {"1", "2", "3"})
+    assert any("new certificate" in f.title.lower() for f in second)
+    assert second[0].evidence["new_count"] == 1
+
+
+def test_surface_maps_and_flags_third_party():
+    from allscan.surface import SurfaceModule
+
+    result = ScanResult(target="x.test")
+    # two IPs under two different ASNs; one host each
+    result.add(Finding(category=Category.ASN, title="AS111", evidence={
+        "asn": "111", "org": "Primary", "ips": ["10.0.0.1", "10.0.0.2"], "prefixes": ["10.0.0.0/24"]}))
+    result.add(Finding(category=Category.ASN, title="AS222", evidence={
+        "asn": "222", "org": "CDN", "ips": ["9.9.9.9"], "prefixes": ["9.9.9.0/24"]}))
+    state = {
+        "_result": result,
+        "hosts": {"a.x.test": ["10.0.0.1"], "b.x.test": ["10.0.0.2"], "cdn.x.test": ["9.9.9.9"]},
+        "services": [{"host": "a.x.test", "port": 443, "product": "nginx", "version": "1.18"}],
+        "web_hosts": ["https://a.x.test"],
+    }
+    ctx = _make_ctx(target="x.test", state=state)
+    out = SurfaceModule().run(ctx)
+    assert ctx.state.get("surface")
+    assert any(f.category == Category.SURFACE and "Attack surface" in f.title for f in out)
+    # cdn.x.test is on AS222 (not the primary AS111) -> third-party flag
+    assert any("third-party ASNs" in f.title for f in out)
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""

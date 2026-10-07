@@ -17,6 +17,9 @@ modules:
   - netdiscover        # ICMP ping sweep (CIDR), ARP neighbours, traceroute
   - recon              # subdomain & asset discovery
   - dnsx               # DNS deep-dive: SOA/SRV/CAA/DNSKEY, DNSSEC, cache snoop
+  - whois              # WHOIS / RDAP registration data (domain + IP netblocks)
+  - asn                # ASN / IP-range / BGP prefix attribution (Team Cymru)
+  - certs              # certificate + CT-log discovery and new-cert monitoring
   - email              # SPF / DKIM / DMARC posture
   - scan               # port/service scan
   - web                # web enumeration & content discovery
@@ -25,7 +28,10 @@ modules:
   - tls                # SSL/TLS deep audit: protocol matrix, chain, expiry
   - cloud              # exposed cloud buckets + metadata-endpoint references
   - waf                # WAF/CDN fingerprint + rate-limit observation
+  - active             # active probing (detection-only; no-op unless `active: true`)
   - vulns              # informational CVE correlation + misconfigs
+  - exploitrefs        # exploit references + KEV/EPSS enrichment (no payloads)
+  - surface            # attack-surface + infra-relationship roll-up
   - compliance         # baseline pass/fail checklist roll-up (runs last)
 
 # Network/host discovery ----------------------------------------------------

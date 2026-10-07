@@ -33,9 +33,9 @@ DEFAULTS: dict[str, Any] = {
     "skip_nmap": False,           # skip nmap, fall back to banner grabbing
     "os_detection": False,        # nmap -O (needs privileges)
     "modules": [
-        "netdiscover", "recon", "dnsx", "email", "scan", "web",
-        "fingerprint", "headers", "tls", "cloud", "waf", "active",
-        "vulns", "exploitrefs", "compliance",
+        "netdiscover", "recon", "dnsx", "whois", "asn", "certs", "email",
+        "scan", "web", "fingerprint", "headers", "tls", "cloud", "waf",
+        "active", "vulns", "exploitrefs", "surface", "compliance",
     ],
     "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
     "host_discovery_max": 256,     # cap hosts swept in one run
@@ -66,6 +66,9 @@ MODULE_LABELS = {
     "netdiscover": "Network/Host Discovery",
     "recon": "Subdomain Discovery",
     "dnsx": "DNS Deep-Dive",
+    "whois": "WHOIS / RDAP",
+    "asn": "ASN / IP-range Discovery",
+    "certs": "Certificate / CT-log Discovery",
     "email": "Email Security (SPF/DKIM/DMARC)",
     "scan": "Port/Service Scan",
     "web": "Web Enumeration",
@@ -77,6 +80,7 @@ MODULE_LABELS = {
     "active": "Active Probing (detection)",
     "vulns": "CVE Correlation",
     "exploitrefs": "Exploit-Reference Enrichment",
+    "surface": "Attack-Surface Mapping",
     "compliance": "Compliance Checklist",
 }
 

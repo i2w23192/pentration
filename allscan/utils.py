@@ -51,6 +51,36 @@ def normalize_target(value: str) -> str:
     return value.strip().strip(".").lower()
 
 
+def ip_version(value: str) -> Optional[int]:
+    """Return 4 or 6 for an IP literal, else None."""
+    try:
+        return ipaddress.ip_address(value).version
+    except ValueError:
+        return None
+
+
+def is_cidr(value: str) -> bool:
+    try:
+        ipaddress.ip_network(value, strict=False)
+        return "/" in value
+    except ValueError:
+        return False
+
+
+def expand_cidr(value: str, cap: int = 1024) -> list[str]:
+    """Expand a CIDR to host addresses (bounded). Returns [] if not a CIDR."""
+    try:
+        net = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return []
+    out: list[str] = []
+    for host in net.hosts():
+        out.append(str(host))
+        if len(out) >= cap:
+            break
+    return out
+
+
 def validate_target(value: str) -> tuple[bool, str]:
     """Return (ok, message). Message explains the failure when not ok."""
     norm = normalize_target(value)

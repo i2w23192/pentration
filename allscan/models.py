@@ -44,6 +44,10 @@ class Category:
     NETWORK = "network"         # host discovery, ping sweep, traceroute, ARP
     SUBDOMAIN = "subdomains"
     DNS = "dns"                 # DNS records, DNSSEC, cache snooping
+    WHOIS = "whois"             # WHOIS / RDAP registration data
+    ASN = "asn"                 # ASN / IP-range / BGP prefix attribution
+    CERT = "certs"              # certificate discovery + CT-log monitoring
+    SURFACE = "surface"         # attack-surface + infra-relationship mapping
     EMAIL = "email"             # SPF / DKIM / DMARC posture
     PORT = "ports"
     SERVICE = "services"
@@ -64,6 +68,10 @@ class Category:
         NETWORK,
         SUBDOMAIN,
         DNS,
+        WHOIS,
+        ASN,
+        CERT,
+        SURFACE,
         EMAIL,
         PORT,
         SERVICE,

@@ -25,6 +25,10 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 | **Network/Host Discovery** (`netdiscover`) | ICMP ping sweep across a CIDR (defaults to the /24 of the resolved target), read-only ARP neighbour listing, and traceroute hop listing. Shells out to standard tools and degrades gracefully when ICMP/raw sockets are unavailable. |
 | **Subdomain Discovery** (`recon`) | Passive: crt.sh certificate transparency, DNS records (A/AAAA/MX/TXT/NS/CNAME/SOA), reverse PTR. Active: async wordlist brute force, AXFR zone-transfer attempts. Flags wildcard DNS and filters its noise. |
 | **DNS Deep-Dive** (`dnsx`) | Full record dump (SOA, NS, CAA, DNSKEY, DS, TXT, SRV service probes), DNSSEC presence/validation check (DNSKEY + AD flag), and informational DNS cache-snooping detection. Flags missing CAA and unsigned zones. |
+| **WHOIS / RDAP** (`whois`) | RDAP (structured) registration lookup for the domain and resolved IP netblocks, with a WHOIS port-43 fallback. Registrar, key dates, status, name servers, netblock org; flags expiring and recently-registered domains. |
+| **ASN / IP-range Discovery** (`asn`) | Maps every resolved IP to its origin ASN, announced BGP prefix, registry and owning org (Team Cymru DNS service — no API key), and groups hosts by ASN/netblock (target vs. third-party). Prefixes feed the host-discovery sweep. |
+| **Certificate / CT-log Discovery** (`certs`) | Collects certs for the domain from Certificate Transparency (crt.sh): issuers, validity, all SAN names (→ more subdomains), wildcard usage. **CT monitoring:** saves a baseline and, on later runs, flags newly-issued certificates (shadow-infra / unauthorized-issuance early warning). |
+| **Attack-Surface Mapping** (`surface`) | Correlates subdomains ↔ IPs ↔ ASNs ↔ ports/services ↔ web/tech ↔ cloud into a node/edge relationship map (in the JSON for a future topology view). Flags third-party-hosted assets and hostnames with no observed service (dangling DNS). |
 | **Email Security** (`email`) | SPF, DKIM (common-selector probe) and DMARC presence + basic validity. Flags missing records, permissive SPF (`+all`/`?all`) and monitor-only DMARC (`p=none`). |
 | **Port/Service Scan** (`scan`) | Wraps `nmap` (top-1000 by default, full 65535 optional, `-sV` version detection, optional `-O` OS detection). Falls back to a built-in concurrent connect scanner + banner grabber when nmap is unavailable or skipped. Flags sensitive exposed services (Redis, Mongo, Docker API, …). |
 | **Web Enumeration** (`web`) | HTTP/HTTPS probing of every discovered host (status, title, tech fingerprint), plus content brute forcing for sensitive paths (`.git/`, `.env`, backups, config files, actuators, admin panels) and directory-listing detection. |
@@ -309,6 +313,10 @@ allscan/
 ├── netdiscover.py     ping sweep / ARP / traceroute host discovery
 ├── recon.py           subdomain & asset discovery
 ├── dnsx.py            DNS deep-dive (records, DNSSEC, cache snooping)
+├── whois_rdap.py      WHOIS / RDAP registration (registry name: whois)
+├── asn.py             ASN / IP-range discovery (Team Cymru)
+├── certs.py           certificate + CT-log discovery & monitoring
+├── surface.py         attack-surface + infra-relationship mapping
 ├── email_sec.py       SPF / DKIM / DMARC posture (registry name: email)
 ├── scan.py            port/service scanning (nmap wrapper + fallback)
 ├── web.py             web enumeration & content discovery

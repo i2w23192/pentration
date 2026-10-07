@@ -77,6 +77,9 @@ def get_registry() -> dict[str, "Module"]:
     from allscan.netdiscover import NetDiscoverModule
     from allscan.recon import ReconModule
     from allscan.dnsx import DnsxModule
+    from allscan.whois_rdap import WhoisModule
+    from allscan.asn import AsnModule
+    from allscan.certs import CertsModule
     from allscan.email_sec import EmailModule
     from allscan.scan import ScanModule
     from allscan.web import WebModule
@@ -88,12 +91,16 @@ def get_registry() -> dict[str, "Module"]:
     from allscan.active import ActiveModule
     from allscan.vulns import VulnsModule
     from allscan.exploitrefs import ExploitRefsModule
+    from allscan.surface import SurfaceModule
     from allscan.compliance import ComplianceModule
 
     instances = [
         NetDiscoverModule(),
         ReconModule(),
         DnsxModule(),
+        WhoisModule(),
+        AsnModule(),
+        CertsModule(),
         EmailModule(),
         ScanModule(),
         WebModule(),
@@ -105,6 +112,7 @@ def get_registry() -> dict[str, "Module"]:
         ActiveModule(),
         VulnsModule(),
         ExploitRefsModule(),
+        SurfaceModule(),
         ComplianceModule(),
     ]
     return {m.name: m for m in instances}
