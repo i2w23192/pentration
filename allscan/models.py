@@ -56,6 +56,7 @@ class Category:
     WAF = "waf"                 # WAF/CDN and rate-limit observations
     CVE = "cves"
     MISCONFIG = "misconfigs"
+    ACTIVE = "active"           # active-probing detections (confirm, not exploit)
     COMPLIANCE = "compliance"   # baseline pass/fail checklist roll-up
 
     ALL = (
@@ -74,6 +75,7 @@ class Category:
         WAF,
         CVE,
         MISCONFIG,
+        ACTIVE,
         COMPLIANCE,
     )
 
@@ -93,6 +95,11 @@ class Finding:
     description: str = ""
     evidence: dict[str, Any] = field(default_factory=dict)
     module: str = ""
+    # Active-probing schema fields (optional; blank for passive findings so
+    # existing modules and serialized runs are unaffected).
+    location: str = ""      # where the weakness was observed (URL/param/header)
+    confidence: str = ""    # "low" | "medium" | "high" (active detections)
+    note: str = ""          # e.g. "manual validation required"
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     timestamp: float = field(default_factory=time.time)
 
@@ -106,6 +113,9 @@ class Finding:
             "description": self.description,
             "evidence": self.evidence,
             "module": self.module,
+            "location": self.location,
+            "confidence": self.confidence,
+            "note": self.note,
             "timestamp": self.timestamp,
         }
 
@@ -120,6 +130,9 @@ class Finding:
             description=data.get("description", ""),
             evidence=data.get("evidence", {}) or {},
             module=data.get("module", ""),
+            location=data.get("location", ""),
+            confidence=data.get("confidence", ""),
+            note=data.get("note", ""),
             timestamp=data.get("timestamp", time.time()),
         )
 

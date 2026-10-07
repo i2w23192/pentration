@@ -33,6 +33,7 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 | **SSL/TLS Deep Audit** (`tls`) | Protocol support matrix (SSLv3 / TLS 1.0–1.3 accepted?), full certificate-chain validation against the system trust store, and certificate-expiry warnings. Flags deprecated protocols. |
 | **Cloud Exposure** (`cloud`) | Detects cloud-storage bucket references (S3, Azure Blob, GCS) in subdomains/HTML and classifies each as publicly listable / private / absent with a single bucket-root request (no object access). Flags cloud metadata-endpoint references (SSRF sinks) — reference only, never probed. |
 | **WAF/CDN & Rate-limit Detection** (`waf`) | Fingerprints WAFs/CDNs (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, F5, ModSecurity, …) from headers/cookies, and observes rate-limiting (HTTP 429) over a small, bounded request burst. |
+| **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
 | **CVE Correlation** (`vulns`) | Matches detected service/library versions against the public **NVD CVE API** and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
 | **Compliance Checklist** (`compliance`) | Runs last and rolls up all findings into a pass/fail/warn checklist against common baselines (OWASP Secure Headers, basic TLS hygiene, email auth, DNS hygiene, exposure hygiene). Rendered as a dedicated section in the report. |
 | **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded, with the compliance checklist), and a diff mode comparing two runs for the same target. |
@@ -121,8 +122,56 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | `--nvd-api-key` | NVD API key for higher CVE rate limits |
 | `--i-have-authorization` | **Required** to run headless |
 | `--no-tui` / `--json-only` | Force headless / write JSON only |
+| `--active` | Enable **active probing** (detection-only; sends requests) |
+| `--scope-allow HOSTS` | Comma-separated extra in-scope hosts/domains/CIDRs |
+| `--scope-deny HOSTS` | Comma-separated always-blocked hosts/domains/CIDRs (wins) |
+| `--allow-production` | Acknowledge a production target, silence the warning |
+| `--active-max-concurrency N` | Active-only worker cap (default 8) |
+| `--active-stop-after-errors N` | Auto-stop active probing after N consecutive errors |
 
 Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
+
+---
+
+## Active probing (detection mode)
+
+By default allscan is **passive** — it observes. The opt-in **active** profile
+(`--active`, or the toggle on the TUI settings screen) additionally sends
+requests to *confirm* weaknesses, using benign markers and response/error/timing
+signatures. It is **detection-only**: it identifies and reports, and never
+exploits — no data extraction, no shell, no state change.
+
+```bash
+# passive run (default)
+allscan example.com --i-have-authorization --all
+
+# active, detection-only, with an explicit scope
+allscan example.com --i-have-authorization --all --active \
+    --scope-allow "api.example.com,10.0.0.0/24" \
+    --scope-deny  "payments.example.com"
+```
+
+Checks in this phase: reflected input (XSS sink), open redirect, error-based
+SQL-injection signature, and confirmed directory listing. Each active finding is
+`{type, location, severity, evidence, confidence, note:"manual validation required"}`.
+
+**Hard safety controls (always on for active mode):**
+
+- Gated behind the authorization confirmation **and** the explicit `--active` flag.
+- **Scope-enforced** — every request's host is checked against the target + an
+  allowlist, minus a denylist (denylist wins). Out-of-scope hosts are blocked
+  and logged; nothing is sent to them.
+- **Rate-limited and concurrency-capped**, with a conservative active-only cap.
+- **Kill switch / cancel** — the TUI Stop key and `Ctrl+C` halt probing and save
+  partial results; an **automatic stop condition** halts after a configurable
+  run of consecutive request errors.
+- **Non-destructive by default** with a **production-target warning**
+  (acknowledge with `--allow-production`).
+- Every active request (and every scope block) is written to the audit log.
+
+> Active markers are inert: alphanumeric reflect tokens, a single quote for
+> error-based SQL signatures, and a non-resolvable `.invalid` redirect target.
+> No payload changes server state. Findings still require manual validation.
 
 ---
 
@@ -168,10 +217,11 @@ same results screen with JSON/Markdown/HTML export.
   │ [X] DNS Deep-Dive               [X] WAF/CDN & Rate-limit Detection      │
   │ [X] Email Security (SPF/…)      [X] CVE Correlation                     │
   │ [X] Port/Service Scan           [X] Compliance Checklist                │
-  │ [X] Web Enumeration                                                     │
+  │ [X] Web Enumeration             [X] Active Probing (detection)          │
   │ [X] API & Tech Fingerprinting                                           │
   │ [X] HTML/Header Analysis                                                │
   └───────────────────────────────────────────────────────────────────────┘
+  (Active Probing only sends requests when --active / the settings toggle is on.)
 ```
 
 **3. Settings** — full-port toggle, skip-nmap, OS detection, thread count,
@@ -255,6 +305,8 @@ allscan/
 ├── tls.py             SSL/TLS deep audit (protocol matrix, chain, expiry)
 ├── cloud.py           cloud bucket + metadata-endpoint exposure
 ├── waf.py             WAF/CDN fingerprint + rate-limit observation
+├── scope.py           scope enforcement (allow/deny, out-of-scope blocking)
+├── active.py          active probing (detection-only; gated behind --active)
 ├── vulns.py           informational CVE correlation (NVD)
 ├── compliance.py      baseline pass/fail checklist roll-up
 └── report.py          JSON/Markdown/HTML reporting + diff

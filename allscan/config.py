@@ -34,10 +34,20 @@ DEFAULTS: dict[str, Any] = {
     "os_detection": False,        # nmap -O (needs privileges)
     "modules": [
         "netdiscover", "recon", "dnsx", "email", "scan", "web",
-        "fingerprint", "headers", "tls", "cloud", "waf", "vulns", "compliance",
+        "fingerprint", "headers", "tls", "cloud", "waf", "active",
+        "vulns", "compliance",
     ],
     "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
     "host_discovery_max": 256,     # cap hosts swept in one run
+    # --- active probing (detection-only; all off by default) ------------
+    "active": False,               # master switch for active probing (--active)
+    "scope_allow": [],             # extra in-scope hosts/domains/CIDRs
+    "scope_deny": [],              # always-blocked hosts/domains/CIDRs (wins)
+    "allow_production": False,     # silence the production-target warning
+    "active_max_concurrency": 8,   # active-only worker cap (<= threads)
+    "active_max_urls": 25,         # cap probed URLs per run
+    "active_max_params": 6,        # cap probed params per URL
+    "active_stop_after_errors": 25,  # auto-stop after N consecutive request errors
     "output_dir": "allscan-results",
     "wordlist_subdomains": None,  # path; None -> built-in small list
     "wordlist_web": None,         # path; None -> built-in small list
@@ -61,6 +71,7 @@ MODULE_LABELS = {
     "tls": "SSL/TLS Deep Audit",
     "cloud": "Cloud Exposure",
     "waf": "WAF/CDN & Rate-limit Detection",
+    "active": "Active Probing (detection)",
     "vulns": "CVE Correlation",
     "compliance": "Compliance Checklist",
 }
@@ -86,6 +97,14 @@ class Config:
     verify_tls: bool = DEFAULTS["verify_tls"]
     host_discovery_cidr: Optional[str] = DEFAULTS["host_discovery_cidr"]
     host_discovery_max: int = DEFAULTS["host_discovery_max"]
+    active: bool = DEFAULTS["active"]
+    scope_allow: list[str] = field(default_factory=lambda: list(DEFAULTS["scope_allow"]))
+    scope_deny: list[str] = field(default_factory=lambda: list(DEFAULTS["scope_deny"]))
+    allow_production: bool = DEFAULTS["allow_production"]
+    active_max_concurrency: int = DEFAULTS["active_max_concurrency"]
+    active_max_urls: int = DEFAULTS["active_max_urls"]
+    active_max_params: int = DEFAULTS["active_max_params"]
+    active_stop_after_errors: int = DEFAULTS["active_stop_after_errors"]
 
     # --- construction helpers --------------------------------------------
     @classmethod

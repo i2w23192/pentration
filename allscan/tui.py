@@ -262,6 +262,22 @@ class SettingsScreen(Screen):
             with Horizontal(classes="setting-row"):
                 yield Label("Output directory", classes="setting-label")
                 yield Input(value=cfg.output_dir, id="output-dir")
+            yield Rule()
+            yield Static("[b]Active probing[/b] [dim](detection-only — sends requests "
+                         "to CONFIRM weaknesses, never exploit)[/dim]")
+            with Horizontal(classes="setting-row"):
+                yield Label("Enable active probing", classes="setting-label")
+                yield Switch(value=cfg.active, id="active")
+            with Horizontal(classes="setting-row"):
+                yield Label("Scope allow (comma hosts/CIDRs)", classes="setting-label")
+                yield Input(value=", ".join(cfg.scope_allow), id="scope-allow")
+            with Horizontal(classes="setting-row"):
+                yield Label("Scope deny (comma, always blocked)", classes="setting-label")
+                yield Input(value=", ".join(cfg.scope_deny), id="scope-deny")
+            with Horizontal(classes="setting-row"):
+                yield Label("Acknowledge production target", classes="setting-label")
+                yield Switch(value=cfg.allow_production, id="allow-production")
+            yield Static("", id="active-warning")
             with Horizontal(id="settings-buttons"):
                 yield Button("← Back", id="back-btn")
                 yield Button("Start scan ▶", variant="success", id="scan-btn")
@@ -286,6 +302,24 @@ class SettingsScreen(Screen):
             self.notify("Numeric settings must be numbers.", severity="error")
             return
         cfg.output_dir = self.query_one("#output-dir", Input).value or cfg.output_dir
+
+        # active probing settings
+        cfg.active = self.query_one("#active", Switch).value
+        cfg.allow_production = self.query_one("#allow-production", Switch).value
+        cfg.scope_allow = [s.strip() for s in
+                           self.query_one("#scope-allow", Input).value.split(",") if s.strip()]
+        cfg.scope_deny = [s.strip() for s in
+                          self.query_one("#scope-deny", Input).value.split(",") if s.strip()]
+        if cfg.active:
+            from allscan.scope import ScopeGuard
+
+            guard = ScopeGuard(self.app.target, cfg.scope_allow, cfg.scope_deny)  # type: ignore[attr-defined]
+            if guard.looks_production() and not cfg.allow_production:
+                self.notify(
+                    "Active probing on a PRODUCTION-looking target. Detection-only and "
+                    "non-destructive. Tick 'Acknowledge production target' to silence.",
+                    severity="warning", timeout=6,
+                )
         self.app.push_screen(ScanScreen())
 
 

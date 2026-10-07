@@ -35,6 +35,7 @@ MODULE_ORDER = [
     "tls",           # SSL/TLS deep audit
     "cloud",         # cloud bucket / metadata exposure
     "waf",           # WAF/CDN & rate-limit detection
+    "active",        # active probing (detection-only; gated behind --active)
     "vulns",         # informational CVE correlation + misconfigs
     "compliance",    # baseline pass/fail checklist roll-up (must be last)
 ]

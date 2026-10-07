@@ -69,6 +69,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wordlist-web", help="Custom web path wordlist")
     p.add_argument("--nvd-api-key", help="NVD API key (higher CVE rate limits)")
 
+    # --- active probing (detection-only) --------------------------------
+    active = p.add_argument_group("active probing (detection-only; sends requests)")
+    active.add_argument("--active", action="store_true",
+                        help="Enable active probing: send benign requests to CONFIRM "
+                             "weaknesses (never exploit). Requires authorization.")
+    active.add_argument("--scope-allow", metavar="HOST",
+                        help="Comma-separated extra in-scope hosts/domains/CIDRs")
+    active.add_argument("--scope-deny", metavar="HOST",
+                        help="Comma-separated always-blocked hosts/domains/CIDRs (wins)")
+    active.add_argument("--allow-production", action="store_true",
+                        help="Acknowledge the target is production and silence the warning")
+    active.add_argument("--active-max-concurrency", type=int,
+                        help="Active-only worker cap (default 8)")
+    active.add_argument("--active-stop-after-errors", type=int,
+                        help="Auto-stop active probing after N consecutive errors (default 25)")
+
     p.add_argument(
         "--i-have-authorization",
         action="store_true",
@@ -107,6 +123,10 @@ def config_from_args(args) -> Config:
         modules = list(MODULE_ORDER)
     elif args.modules:
         modules = [m.strip() for m in args.modules.split(",") if m.strip()]
+    scope_allow = ([s.strip() for s in args.scope_allow.split(",") if s.strip()]
+                   if getattr(args, "scope_allow", None) else None)
+    scope_deny = ([s.strip() for s in args.scope_deny.split(",") if s.strip()]
+                  if getattr(args, "scope_deny", None) else None)
     return base.apply_overrides(
         threads=args.threads,
         rate_limit=args.rate_limit,
@@ -119,6 +139,12 @@ def config_from_args(args) -> Config:
         wordlist_subdomains=args.wordlist_subdomains,
         wordlist_web=args.wordlist_web,
         nvd_api_key=args.nvd_api_key,
+        active=True if getattr(args, "active", False) else None,
+        scope_allow=scope_allow,
+        scope_deny=scope_deny,
+        allow_production=True if getattr(args, "allow_production", False) else None,
+        active_max_concurrency=getattr(args, "active_max_concurrency", None),
+        active_stop_after_errors=getattr(args, "active_stop_after_errors", None),
     )
 
 
@@ -139,6 +165,20 @@ def resolve_target(args) -> Optional[str]:
 
 
 def run_headless(target: str, config: Config) -> ScanResult:
+    # Active-mode banner + production warning (detection-only, but it does send
+    # requests, so make the operator aware before anything goes out).
+    if getattr(config, "active", False):
+        from allscan.scope import ScopeGuard
+
+        guard = ScopeGuard(target, list(config.scope_allow), list(config.scope_deny))
+        print("\n  [ACTIVE PROBING ENABLED] detection-only: benign markers confirm "
+              "weaknesses, never exploit them.")
+        print(f"  Scope: {target} (+{len(config.scope_allow)} allow / "
+              f"{len(config.scope_deny)} deny). Out-of-scope hosts are blocked.")
+        if guard.looks_production() and not config.allow_production:
+            print("  ⚠  WARNING: target looks like PRODUCTION. Probing stays "
+                  "non-destructive; pass --allow-production to acknowledge.\n")
+
     try:
         from rich.console import Console
         from rich.live import Live

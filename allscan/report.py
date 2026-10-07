@@ -148,10 +148,16 @@ def to_markdown(result: ScanResult) -> str:
         for f in findings:
             badge = f"`{f.severity.value.upper()}`"
             lines.append(f"### {badge} {f.title}")
-            if f.target:
+            if f.location:
+                lines.append(f"*Location:* `{f.location}`  ")
+            elif f.target:
                 lines.append(f"*Target:* `{f.target}`  ")
+            if f.confidence:
+                lines.append(f"*Confidence:* {f.confidence}  ")
             if f.description:
                 lines.append(f.description)
+            if f.note:
+                lines.append(f"> ⚠ {f.note}")
             if f.evidence:
                 lines.append("")
                 lines.append("```json")
@@ -210,8 +216,10 @@ def to_html(result: ScanResult) -> str:
             <span class="ftitle">{esc(f.title)}</span>
           </summary>
           <div class="fbody">
-            {f'<div class="target">target: <code>{esc(f.target)}</code></div>' if f.target else ''}
+            {f'<div class="target">location: <code>{esc(f.location)}</code></div>' if f.location else (f'<div class="target">target: <code>{esc(f.target)}</code></div>' if f.target else '')}
+            {f'<div class="target">confidence: {esc(f.confidence)}</div>' if f.confidence else ''}
             {f'<p>{esc(f.description)}</p>' if f.description else ''}
+            {f'<p class="note">⚠ {esc(f.note)}</p>' if f.note else ''}
             {evidence}
           </div>
         </details>"""
@@ -297,6 +305,7 @@ def to_html(result: ScanResult) -> str:
             font-size:.72rem; }}
   .cbaseline {{ color:#8b949e; white-space:nowrap; }}
   .cdetail {{ color:#9ecbff; }}
+  .note {{ color:#ffcf99; font-size:.85rem; }}
 </style>
 </head>
 <body>

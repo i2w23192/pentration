@@ -383,6 +383,79 @@ def test_report_includes_compliance_section():
     assert "compliance checklist" in html and "FAIL" in html
 
 
+# --------------------------------------------------------------------------- #
+# active probing + scope enforcement (offline)
+# --------------------------------------------------------------------------- #
+
+
+def test_scope_guard_in_out_and_deny():
+    from allscan.scope import ScopeGuard
+
+    g = ScopeGuard("10.0.0.5", allow=["10.0.1.0/24", "app.example.com"],
+                   deny=["10.0.1.9"])
+    assert g.check("10.0.0.5") is True            # the target itself
+    assert g.check("10.0.1.50") is True           # allow CIDR
+    assert g.check("10.0.1.9") is False           # denylist wins over allow CIDR
+    assert g.check("app.example.com") is True     # allow host (exact)
+    assert g.check("sub.app.example.com") is True # subdomain of allowed domain
+    assert g.check("8.8.8.8") is False            # out of scope
+    assert g.check("evil.com") is False           # out of scope
+    d = g.decide("8.8.8.8")
+    assert d.allowed is False and "out of scope" in d.reason
+
+
+def test_scope_guard_production_heuristic():
+    from allscan.scope import ScopeGuard
+
+    assert ScopeGuard("127.0.0.1").looks_production() is False
+    assert ScopeGuard("lab.test").looks_production() is False  # lab suffix
+
+
+def test_active_module_gated_off_by_default():
+    from allscan.active import ActiveModule
+
+    ctx = _make_ctx()  # Config() => active is False
+    assert ctx.config.active is False
+    out = ActiveModule().run(ctx)
+    assert len(out) == 1
+    assert out[0].category == Category.ACTIVE
+    assert "disabled" in out[0].title.lower()
+
+
+def test_active_finding_schema_roundtrip():
+    from allscan.active import ActiveModule
+
+    f = ActiveModule()._finding(
+        "reflected-input", "http://x/?a=1 [param=a]", Severity.LOW,
+        evidence={"param": "a"}, confidence="medium",
+        title="Reflected input observed", description="benign marker reflected",
+    )
+    assert f.category == Category.ACTIVE
+    assert f.location.startswith("http://x")
+    assert f.target == "http://x/?a=1"
+    assert f.confidence == "medium"
+    assert f.note == "manual validation required"
+    assert f.evidence["type"] == "reflected-input"
+    # the schema fields survive JSON round-trip
+    back = Finding.from_dict(f.to_dict())
+    assert back.location == f.location
+    assert back.confidence == "medium"
+    assert back.note == "manual validation required"
+
+
+def test_config_active_defaults_off_and_cli_enables():
+    from allscan.main import build_parser, config_from_args
+
+    cfg = config_from_args(build_parser().parse_args(["example.test"]))
+    assert cfg.active is False
+    cfg2 = config_from_args(build_parser().parse_args(
+        ["example.test", "--active", "--scope-allow", "a.com,10.0.0.0/24",
+         "--scope-deny", "secret.example.com"]))
+    assert cfg2.active is True
+    assert "a.com" in cfg2.scope_allow and "10.0.0.0/24" in cfg2.scope_allow
+    assert "secret.example.com" in cfg2.scope_deny
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""
