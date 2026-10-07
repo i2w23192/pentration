@@ -25,6 +25,10 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 | **Network/Host Discovery** (`netdiscover`) | ICMP ping sweep across a CIDR (defaults to the /24 of the resolved target), read-only ARP neighbour listing, and traceroute hop listing. Shells out to standard tools and degrades gracefully when ICMP/raw sockets are unavailable. |
 | **Subdomain Discovery** (`recon`) | Passive: crt.sh certificate transparency, DNS records (A/AAAA/MX/TXT/NS/CNAME/SOA), reverse PTR. Active: async wordlist brute force, AXFR zone-transfer attempts. Flags wildcard DNS and filters its noise. |
 | **DNS Deep-Dive** (`dnsx`) | Full record dump (SOA, NS, CAA, DNSKEY, DS, TXT, SRV service probes), DNSSEC presence/validation check (DNSKEY + AD flag), and informational DNS cache-snooping detection. Flags missing CAA and unsigned zones. |
+| **WHOIS / RDAP** (`whois`) | RDAP (structured) registration lookup for the domain and resolved IP netblocks, with a WHOIS port-43 fallback. Registrar, key dates, status, name servers, netblock org; flags expiring and recently-registered domains. |
+| **ASN / IP-range Discovery** (`asn`) | Maps every resolved IP to its origin ASN, announced BGP prefix, registry and owning org (Team Cymru DNS service — no API key), and groups hosts by ASN/netblock (target vs. third-party). Prefixes feed the host-discovery sweep. |
+| **Certificate / CT-log Discovery** (`certs`) | Collects certs for the domain from Certificate Transparency (crt.sh): issuers, validity, all SAN names (→ more subdomains), wildcard usage. **CT monitoring:** saves a baseline and, on later runs, flags newly-issued certificates (shadow-infra / unauthorized-issuance early warning). |
+| **Attack-Surface Mapping** (`surface`) | Correlates subdomains ↔ IPs ↔ ASNs ↔ ports/services ↔ web/tech ↔ cloud into a node/edge relationship map (in the JSON for a future topology view). Flags third-party-hosted assets and hostnames with no observed service (dangling DNS). |
 | **Email Security** (`email`) | SPF, DKIM (common-selector probe) and DMARC presence + basic validity. Flags missing records, permissive SPF (`+all`/`?all`) and monitor-only DMARC (`p=none`). |
 | **Port/Service Scan** (`scan`) | Wraps `nmap` (top-1000 by default, full 65535 optional, `-sV` version detection, optional `-O` OS detection). Falls back to a built-in concurrent connect scanner + banner grabber when nmap is unavailable or skipped. Flags sensitive exposed services (Redis, Mongo, Docker API, …). |
 | **Web Enumeration** (`web`) | HTTP/HTTPS probing of every discovered host (status, title, tech fingerprint), plus content brute forcing for sensitive paths (`.git/`, `.env`, backups, config files, actuators, admin panels) and directory-listing detection. |
@@ -34,7 +38,8 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 | **Cloud Exposure** (`cloud`) | Detects cloud-storage bucket references (S3, Azure Blob, GCS) in subdomains/HTML and classifies each as publicly listable / private / absent with a single bucket-root request (no object access). Flags cloud metadata-endpoint references (SSRF sinks) — reference only, never probed. |
 | **WAF/CDN & Rate-limit Detection** (`waf`) | Fingerprints WAFs/CDNs (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, F5, ModSecurity, …) from headers/cookies, and observes rate-limiting (HTTP 429) over a small, bounded request burst. |
 | **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
-| **CVE Correlation** (`vulns`) | Matches detected service/library versions against the public **NVD CVE API** and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
+| **CVE Correlation** (`vulns`) | Matches detected service/library versions against the **NVD** and **CIRCL CVE Search** APIs (merged + deduped) and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
+| **Exploit-Reference Enrichment** (`exploitrefs`) | For each correlated CVE, adds decision-useful **references and risk signals**: CISA **KEV** (exploited-in-the-wild) status, **EPSS** score/percentile, and ExploitDB / Metasploit reference links (plus concrete EDB-IDs when pointed at a local ExploitDB `files_exploits.csv`). *References and intelligence only — no exploit code is downloaded, embedded, or run, and no exploitation is performed.* |
 | **Compliance Checklist** (`compliance`) | Runs last and rolls up all findings into a pass/fail/warn checklist against common baselines (OWASP Secure Headers, basic TLS hygiene, email auth, DNS hygiene, exposure hygiene). Rendered as a dedicated section in the report. |
 | **Reporting** (`report`) | Structured JSON per run, auto-generated Markdown & HTML summaries (severity-tagged, colour-coded, with the compliance checklist), and a diff mode comparing two runs for the same target. |
 
@@ -94,6 +99,12 @@ allscan 203.0.113.10 --i-have-authorization --modules web,headers --skip-nmap
 
 # full port range + OS detection (needs root for -O):
 sudo allscan example.com --i-have-authorization --full-ports --os-detection
+
+# full chain minus a couple of modules, with a PDF report:
+allscan example.com --i-have-authorization --all --skip-active --skip web --pdf
+
+# many targets from a file (host/IP/CIDR per line): per-target reports + aggregate
+allscan --targets-file scope.txt --i-have-authorization --all
 ```
 
 Management subcommands:
@@ -108,8 +119,13 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | Flag | Meaning |
 | --- | --- |
 | `--domain` / `--ip` / positional | Target (domain or IP) |
-| `--all` | Run every module (recon→scan→web→headers→vulns) with defaults |
+| `--targets-file FILE` | Run the chain per line (host/IP/CIDR); per-target reports + aggregate |
+| `--all` | Run every module with defaults |
 | `--modules a,b,c` | Which modules to run (default: all) |
+| `--skip m1,m2` / `--skip-web` / `--skip-scan` … | Drop modules from the full chain / `--all` |
+| `--cve-source nvd,circl` | CVE data sources to query |
+| `--exploitdb-csv FILE` | Local ExploitDB CSV for concrete EDB-ID references |
+| `--pdf` | Also write a PDF report (needs `reportlab`) |
 | `--full-ports` | Scan all 65535 ports |
 | `--skip-nmap` | Use the built-in scanner instead of nmap |
 | `--os-detection` | nmap `-O` OS detection (needs root) |
@@ -297,6 +313,10 @@ allscan/
 ├── netdiscover.py     ping sweep / ARP / traceroute host discovery
 ├── recon.py           subdomain & asset discovery
 ├── dnsx.py            DNS deep-dive (records, DNSSEC, cache snooping)
+├── whois_rdap.py      WHOIS / RDAP registration (registry name: whois)
+├── asn.py             ASN / IP-range discovery (Team Cymru)
+├── certs.py           certificate + CT-log discovery & monitoring
+├── surface.py         attack-surface + infra-relationship mapping
 ├── email_sec.py       SPF / DKIM / DMARC posture (registry name: email)
 ├── scan.py            port/service scanning (nmap wrapper + fallback)
 ├── web.py             web enumeration & content discovery
@@ -307,9 +327,11 @@ allscan/
 ├── waf.py             WAF/CDN fingerprint + rate-limit observation
 ├── scope.py           scope enforcement (allow/deny, out-of-scope blocking)
 ├── active.py          active probing (detection-only; gated behind --active)
-├── vulns.py           informational CVE correlation (NVD)
+├── vulns.py           CVE correlation (NVD + CIRCL)
+├── exploitrefs.py     exploit REFERENCES + KEV/EPSS enrichment (no payloads)
 ├── compliance.py      baseline pass/fail checklist roll-up
-└── report.py          JSON/Markdown/HTML reporting + diff
+├── report.py          JSON/Markdown/HTML reporting + diff + aggregate
+└── report_pdf.py      PDF report (ReportLab; exec summary + risk table)
 tests/                 offline unit tests (no network)
 requirements.txt
 config.example.yaml

@@ -44,6 +44,10 @@ class Category:
     NETWORK = "network"         # host discovery, ping sweep, traceroute, ARP
     SUBDOMAIN = "subdomains"
     DNS = "dns"                 # DNS records, DNSSEC, cache snooping
+    WHOIS = "whois"             # WHOIS / RDAP registration data
+    ASN = "asn"                 # ASN / IP-range / BGP prefix attribution
+    CERT = "certs"              # certificate discovery + CT-log monitoring
+    SURFACE = "surface"         # attack-surface + infra-relationship mapping
     EMAIL = "email"             # SPF / DKIM / DMARC posture
     PORT = "ports"
     SERVICE = "services"
@@ -55,6 +59,7 @@ class Category:
     CLOUD = "cloud"             # exposed buckets, metadata endpoints
     WAF = "waf"                 # WAF/CDN and rate-limit observations
     CVE = "cves"
+    EXPLOITREF = "exploit_refs"  # public exploit REFERENCES + KEV/EPSS (no payloads)
     MISCONFIG = "misconfigs"
     ACTIVE = "active"           # active-probing detections (confirm, not exploit)
     COMPLIANCE = "compliance"   # baseline pass/fail checklist roll-up
@@ -63,6 +68,10 @@ class Category:
         NETWORK,
         SUBDOMAIN,
         DNS,
+        WHOIS,
+        ASN,
+        CERT,
+        SURFACE,
         EMAIL,
         PORT,
         SERVICE,
@@ -74,6 +83,7 @@ class Category:
         CLOUD,
         WAF,
         CVE,
+        EXPLOITREF,
         MISCONFIG,
         ACTIVE,
         COMPLIANCE,

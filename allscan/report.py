@@ -367,6 +367,53 @@ def diff_runs(old: ScanResult, new: ScanResult) -> DiffResult:
     )
 
 
+def save_aggregate(results: list, output_dir: Path) -> Path:
+    """Write an aggregate summary across several per-target runs.
+
+    ``results`` is a list of (target, ScanResult) tuples. Produces a JSON file
+    and a sibling Markdown summary; returns the JSON path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    rows = []
+    totals = {s.value: 0 for s in Severity}
+    for target, result in results:
+        counts = result.counts_by_severity()
+        for k, v in counts.items():
+            totals[k] += v
+        rows.append({
+            "target": target,
+            "findings": len(result.findings),
+            "severity_counts": counts,
+            "partial": result.partial,
+            "duration": round(result.duration, 1),
+            "modules_run": result.modules_run,
+        })
+    agg = {
+        "generated": time.time(),
+        "targets": len(results),
+        "severity_totals": totals,
+        "total_findings": sum(r["findings"] for r in rows),
+        "per_target": rows,
+    }
+    jpath = output_dir / f"allscan_aggregate_{ts}.json"
+    jpath.write_text(json.dumps(agg, indent=2, default=str))
+
+    lines = [f"# allscan aggregate summary ({len(results)} targets)", ""]
+    lines.append("| Target | Findings | High | Med | Low | Info | Partial |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | :---: |")
+    for r in sorted(rows, key=lambda x: (-x["severity_counts"]["high"],
+                                         -x["severity_counts"]["medium"])):
+        c = r["severity_counts"]
+        lines.append(f"| {r['target']} | {r['findings']} | {c['high']} | {c['medium']} "
+                     f"| {c['low']} | {c['info']} | {'yes' if r['partial'] else ''} |")
+    lines.append(f"| **Total** | **{agg['total_findings']}** | {totals['high']} "
+                 f"| {totals['medium']} | {totals['low']} | {totals['info']} | |")
+    (output_dir / f"allscan_aggregate_{ts}.md").write_text("\n".join(lines))
+    return jpath
+
+
 def diff_to_markdown(d: DiffResult) -> str:
     lines = [f"# allscan diff — {d.target}", ""]
     lines.append(f"- **New findings:** {len(d.added)}")

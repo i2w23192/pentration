@@ -17,6 +17,9 @@ modules:
   - netdiscover        # ICMP ping sweep (CIDR), ARP neighbours, traceroute
   - recon              # subdomain & asset discovery
   - dnsx               # DNS deep-dive: SOA/SRV/CAA/DNSKEY, DNSSEC, cache snoop
+  - whois              # WHOIS / RDAP registration data (domain + IP netblocks)
+  - asn                # ASN / IP-range / BGP prefix attribution (Team Cymru)
+  - certs              # certificate + CT-log discovery and new-cert monitoring
   - email              # SPF / DKIM / DMARC posture
   - scan               # port/service scan
   - web                # web enumeration & content discovery
@@ -25,7 +28,10 @@ modules:
   - tls                # SSL/TLS deep audit: protocol matrix, chain, expiry
   - cloud              # exposed cloud buckets + metadata-endpoint references
   - waf                # WAF/CDN fingerprint + rate-limit observation
+  - active             # active probing (detection-only; no-op unless `active: true`)
   - vulns              # informational CVE correlation + misconfigs
+  - exploitrefs        # exploit references + KEV/EPSS enrichment (no payloads)
+  - surface            # attack-surface + infra-relationship roll-up
   - compliance         # baseline pass/fail checklist roll-up (runs last)
 
 # Network/host discovery ----------------------------------------------------
@@ -65,6 +71,18 @@ dns_resolvers:
 # An NVD API key raises your rate limit from ~5 to ~50 requests/30s.
 # Request one free at https://nvd.nist.gov/developers/request-an-api-key
 nvd_api_key: null
+
+# CVE data sources to query (any of: nvd, circl). Results are merged + deduped.
+cve_sources: [nvd, circl]
+
+# Exploit-reference enrichment -----------------------------------------------
+# Optional local ExploitDB checkout CSV to resolve concrete EDB-IDs offline.
+# References/intel only — allscan never downloads, embeds or runs exploit code.
+#   e.g. /opt/exploitdb/files_exploits.csv
+exploitdb_csv: null
+
+# Reporting ------------------------------------------------------------------
+pdf: false                    # also emit a ReportLab PDF (exec summary + risk table)
 
 # Identification ------------------------------------------------------------
 user_agent: "allscan/1.0 (authorized security testing)"

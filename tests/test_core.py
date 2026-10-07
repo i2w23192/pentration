@@ -9,6 +9,7 @@ Run with:  pytest -q
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -454,6 +455,182 @@ def test_config_active_defaults_off_and_cli_enables():
     assert cfg2.active is True
     assert "a.com" in cfg2.scope_allow and "10.0.0.0/24" in cfg2.scope_allow
     assert "secret.example.com" in cfg2.scope_deny
+
+
+# --------------------------------------------------------------------------- #
+# phase-4 small additions: skip flags, multi-target, CVE source, exploit refs, PDF
+# --------------------------------------------------------------------------- #
+
+
+def test_skip_flags_subtract_from_full_chain():
+    from allscan.main import build_parser, config_from_args
+
+    cfg = config_from_args(build_parser().parse_args(
+        ["example.test", "--all", "--skip-web", "--skip", "active,cloud"]))
+    assert "web" not in cfg.modules
+    assert "active" not in cfg.modules
+    assert "cloud" not in cfg.modules
+    assert "recon" in cfg.modules  # untouched modules remain
+
+
+def test_cve_source_flag_parsed():
+    from allscan.main import build_parser, config_from_args
+
+    cfg = config_from_args(build_parser().parse_args(
+        ["example.test", "--cve-source", "circl"]))
+    assert cfg.cve_sources == ["circl"]
+
+
+def test_read_targets_file_hosts_and_cidr(tmp_path):
+    from allscan.main import read_targets_file
+
+    f = tmp_path / "targets.txt"
+    f.write_text("# comment\nexample.com\n10.0.0.0/30\n\nbad target\n8.8.8.8\n")
+    targets = read_targets_file(str(f), cap=100)
+    assert "example.com" in targets
+    assert "8.8.8.8" in targets
+    # /30 expands to 2 usable hosts
+    assert "10.0.0.1" in targets and "10.0.0.2" in targets
+    assert "bad target" not in targets
+
+
+def test_read_targets_file_respects_cap(tmp_path):
+    from allscan.main import read_targets_file
+
+    f = tmp_path / "t.txt"
+    f.write_text("10.0.0.0/24\n")
+    assert len(read_targets_file(str(f), cap=5)) == 5
+
+
+def test_save_aggregate(tmp_path):
+    r1 = ScanResult(target="a.test")
+    r1.add(Finding(category=Category.CVE, title="CVE-1", severity=Severity.HIGH))
+    r1.finished_at = r1.started_at + 1
+    r2 = ScanResult(target="b.test")
+    r2.finished_at = r2.started_at + 1
+    path = report.save_aggregate([("a.test", r1), ("b.test", r2)], tmp_path)
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["targets"] == 2
+    assert data["severity_totals"]["high"] == 1
+    assert path.with_suffix(".md").exists()
+
+
+def test_exploitrefs_enriches_with_kev_epss(monkeypatch):
+    import allscan.exploitrefs as er
+    from allscan.exploitrefs import ExploitRefsModule
+
+    # avoid network: stub the feeds
+    monkeypatch.setattr(ExploitRefsModule, "_load_kev",
+                        lambda self, ctx: {"CVE-2021-44228"})
+    monkeypatch.setattr(ExploitRefsModule, "_load_epss",
+                        lambda self, ctx, ids: {"CVE-2021-44228": {"epss": 0.97, "percentile": 0.99}})
+    monkeypatch.setattr(ExploitRefsModule, "_load_exploitdb_csv",
+                        lambda self, ctx: {"CVE-2021-44228": ["50592"]})
+
+    result = ScanResult(target="x.test")
+    result.add(Finding(category=Category.CVE, title="CVE-2021-44228 — log4j 2.14",
+                       severity=Severity.HIGH,
+                       evidence={"cve_id": "CVE-2021-44228", "product": "log4j",
+                                 "version": "2.14"}))
+    ctx = _make_ctx(state={"_result": result})
+    out = ExploitRefsModule().run(ctx)
+    assert len(out) == 1
+    f = out[0]
+    assert f.category == Category.EXPLOITREF
+    assert f.evidence["kev"] is True
+    assert f.evidence["epss"] == 0.97
+    assert f.evidence["references"]["exploitdb_ids"] == ["50592"]
+    assert "no exploit code" in f.note
+    # KEV => escalated priority
+    assert f.severity is Severity.HIGH
+
+
+def test_pdf_report_generates(tmp_path):
+    pytest.importorskip("reportlab")
+    from allscan import report_pdf
+
+    r = ScanResult(target="pdf.test")
+    r.add(Finding(category=Category.CVE, title="CVE-1 big bad",
+                  severity=Severity.HIGH, location="svc/1.0"))
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    r.meta = {"compliance": [{"id": "x", "name": "CSP", "baseline": "OWASP",
+                              "status": "fail", "detail": "missing"}]}
+    r.finished_at = r.started_at + 2
+    path = report_pdf.save_pdf(r, tmp_path)
+    assert path.exists() and path.suffix == ".pdf"
+    assert path.read_bytes()[:4] == b"%PDF"
+
+
+# --------------------------------------------------------------------------- #
+# phase 2: recon depth (whois / asn / certs / surface) — offline
+# --------------------------------------------------------------------------- #
+
+
+def test_whois_date_flags_expiring_and_recent():
+    import datetime
+    from allscan.whois_rdap import WhoisModule, _parse_dt
+
+    assert _parse_dt("2020-01-02T00:00:00Z") is not None
+    ctx = _make_ctx(target="x.test")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    soon = (now + datetime.timedelta(days=5)).isoformat()
+    recent = (now - datetime.timedelta(days=10)).isoformat()
+    flags = WhoisModule()._date_flags(ctx, recent, soon)
+    titles = " ".join(f.title.lower() for f in flags)
+    assert "expires in" in titles
+    assert "recently registered" in titles
+
+
+def test_asn_lookup_ip_parses_cymru(monkeypatch):
+    from allscan.asn import AsnModule
+
+    m = AsnModule()
+    # stub the DNS TXT call: origin lookup returns Cymru-format string
+    monkeypatch.setattr(AsnModule, "_txt",
+                        lambda self, ctx, resolver, name: "15169 | 8.8.8.0/24 | US | arin | 1992-12-01")
+    ctx = _make_ctx()
+    info = m._lookup_ip(ctx, None, "8.8.8.8")
+    assert info["asn"] == "15169"
+    assert info["prefix"] == "8.8.8.0/24"
+
+
+def test_certs_ct_diff_baseline_then_new(tmp_path):
+    from allscan.certs import CertsModule
+
+    ctx = _make_ctx(target="x.test")
+    ctx.config.output_dir = str(tmp_path)
+    m = CertsModule()
+    # first run: saves baseline, no diff finding
+    first = m._ct_diff(ctx, {"1", "2"})
+    assert first == []
+    # second run with a new cert id: flags it
+    second = m._ct_diff(ctx, {"1", "2", "3"})
+    assert any("new certificate" in f.title.lower() for f in second)
+    assert second[0].evidence["new_count"] == 1
+
+
+def test_surface_maps_and_flags_third_party():
+    from allscan.surface import SurfaceModule
+
+    result = ScanResult(target="x.test")
+    # two IPs under two different ASNs; one host each
+    result.add(Finding(category=Category.ASN, title="AS111", evidence={
+        "asn": "111", "org": "Primary", "ips": ["10.0.0.1", "10.0.0.2"], "prefixes": ["10.0.0.0/24"]}))
+    result.add(Finding(category=Category.ASN, title="AS222", evidence={
+        "asn": "222", "org": "CDN", "ips": ["9.9.9.9"], "prefixes": ["9.9.9.0/24"]}))
+    state = {
+        "_result": result,
+        "hosts": {"a.x.test": ["10.0.0.1"], "b.x.test": ["10.0.0.2"], "cdn.x.test": ["9.9.9.9"]},
+        "services": [{"host": "a.x.test", "port": 443, "product": "nginx", "version": "1.18"}],
+        "web_hosts": ["https://a.x.test"],
+    }
+    ctx = _make_ctx(target="x.test", state=state)
+    out = SurfaceModule().run(ctx)
+    assert ctx.state.get("surface")
+    assert any(f.category == Category.SURFACE and "Attack surface" in f.title for f in out)
+    # cdn.x.test is on AS222 (not the primary AS111) -> third-party flag
+    assert any("third-party ASNs" in f.title for f in out)
 
 
 def test_tui_allscan_runs_all_modules_and_skips_config():

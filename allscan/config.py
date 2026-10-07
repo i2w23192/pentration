@@ -33,9 +33,9 @@ DEFAULTS: dict[str, Any] = {
     "skip_nmap": False,           # skip nmap, fall back to banner grabbing
     "os_detection": False,        # nmap -O (needs privileges)
     "modules": [
-        "netdiscover", "recon", "dnsx", "email", "scan", "web",
-        "fingerprint", "headers", "tls", "cloud", "waf", "active",
-        "vulns", "compliance",
+        "netdiscover", "recon", "dnsx", "whois", "asn", "certs", "email",
+        "scan", "web", "fingerprint", "headers", "tls", "cloud", "waf",
+        "active", "vulns", "exploitrefs", "surface", "compliance",
     ],
     "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
     "host_discovery_max": 256,     # cap hosts swept in one run
@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     "wordlist_web": None,         # path; None -> built-in small list
     "user_agent": "allscan/1.0 (authorized security testing)",
     "nvd_api_key": None,          # optional NVD API key for higher rate limits
+    "cve_sources": ["nvd", "circl"],  # CVE data sources to query (nvd, circl)
+    "exploitdb_csv": None,        # optional local ExploitDB files_exploits.csv for EDB-ID refs
+    "pdf": False,                 # also emit a ReportLab PDF report
     "dns_resolvers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
     "max_subdomains_bruteforce": 2000,
     "follow_redirects": True,
@@ -63,6 +66,9 @@ MODULE_LABELS = {
     "netdiscover": "Network/Host Discovery",
     "recon": "Subdomain Discovery",
     "dnsx": "DNS Deep-Dive",
+    "whois": "WHOIS / RDAP",
+    "asn": "ASN / IP-range Discovery",
+    "certs": "Certificate / CT-log Discovery",
     "email": "Email Security (SPF/DKIM/DMARC)",
     "scan": "Port/Service Scan",
     "web": "Web Enumeration",
@@ -73,6 +79,8 @@ MODULE_LABELS = {
     "waf": "WAF/CDN & Rate-limit Detection",
     "active": "Active Probing (detection)",
     "vulns": "CVE Correlation",
+    "exploitrefs": "Exploit-Reference Enrichment",
+    "surface": "Attack-Surface Mapping",
     "compliance": "Compliance Checklist",
 }
 
@@ -91,6 +99,9 @@ class Config:
     wordlist_web: Optional[str] = DEFAULTS["wordlist_web"]
     user_agent: str = DEFAULTS["user_agent"]
     nvd_api_key: Optional[str] = DEFAULTS["nvd_api_key"]
+    cve_sources: list[str] = field(default_factory=lambda: list(DEFAULTS["cve_sources"]))
+    exploitdb_csv: Optional[str] = DEFAULTS["exploitdb_csv"]
+    pdf: bool = DEFAULTS["pdf"]
     dns_resolvers: list[str] = field(default_factory=lambda: list(DEFAULTS["dns_resolvers"]))
     max_subdomains_bruteforce: int = DEFAULTS["max_subdomains_bruteforce"]
     follow_redirects: bool = DEFAULTS["follow_redirects"]
