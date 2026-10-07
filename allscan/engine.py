@@ -37,6 +37,7 @@ MODULE_ORDER = [
     "waf",           # WAF/CDN & rate-limit detection
     "active",        # active probing (detection-only; gated behind --active)
     "vulns",         # informational CVE correlation + misconfigs
+    "exploitrefs",   # exploit REFERENCES + KEV/EPSS enrichment (no payloads)
     "compliance",    # baseline pass/fail checklist roll-up (must be last)
 ]
 

@@ -9,6 +9,7 @@ Run with:  pytest -q
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -454,6 +455,111 @@ def test_config_active_defaults_off_and_cli_enables():
     assert cfg2.active is True
     assert "a.com" in cfg2.scope_allow and "10.0.0.0/24" in cfg2.scope_allow
     assert "secret.example.com" in cfg2.scope_deny
+
+
+# --------------------------------------------------------------------------- #
+# phase-4 small additions: skip flags, multi-target, CVE source, exploit refs, PDF
+# --------------------------------------------------------------------------- #
+
+
+def test_skip_flags_subtract_from_full_chain():
+    from allscan.main import build_parser, config_from_args
+
+    cfg = config_from_args(build_parser().parse_args(
+        ["example.test", "--all", "--skip-web", "--skip", "active,cloud"]))
+    assert "web" not in cfg.modules
+    assert "active" not in cfg.modules
+    assert "cloud" not in cfg.modules
+    assert "recon" in cfg.modules  # untouched modules remain
+
+
+def test_cve_source_flag_parsed():
+    from allscan.main import build_parser, config_from_args
+
+    cfg = config_from_args(build_parser().parse_args(
+        ["example.test", "--cve-source", "circl"]))
+    assert cfg.cve_sources == ["circl"]
+
+
+def test_read_targets_file_hosts_and_cidr(tmp_path):
+    from allscan.main import read_targets_file
+
+    f = tmp_path / "targets.txt"
+    f.write_text("# comment\nexample.com\n10.0.0.0/30\n\nbad target\n8.8.8.8\n")
+    targets = read_targets_file(str(f), cap=100)
+    assert "example.com" in targets
+    assert "8.8.8.8" in targets
+    # /30 expands to 2 usable hosts
+    assert "10.0.0.1" in targets and "10.0.0.2" in targets
+    assert "bad target" not in targets
+
+
+def test_read_targets_file_respects_cap(tmp_path):
+    from allscan.main import read_targets_file
+
+    f = tmp_path / "t.txt"
+    f.write_text("10.0.0.0/24\n")
+    assert len(read_targets_file(str(f), cap=5)) == 5
+
+
+def test_save_aggregate(tmp_path):
+    r1 = ScanResult(target="a.test")
+    r1.add(Finding(category=Category.CVE, title="CVE-1", severity=Severity.HIGH))
+    r1.finished_at = r1.started_at + 1
+    r2 = ScanResult(target="b.test")
+    r2.finished_at = r2.started_at + 1
+    path = report.save_aggregate([("a.test", r1), ("b.test", r2)], tmp_path)
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["targets"] == 2
+    assert data["severity_totals"]["high"] == 1
+    assert path.with_suffix(".md").exists()
+
+
+def test_exploitrefs_enriches_with_kev_epss(monkeypatch):
+    import allscan.exploitrefs as er
+    from allscan.exploitrefs import ExploitRefsModule
+
+    # avoid network: stub the feeds
+    monkeypatch.setattr(ExploitRefsModule, "_load_kev",
+                        lambda self, ctx: {"CVE-2021-44228"})
+    monkeypatch.setattr(ExploitRefsModule, "_load_epss",
+                        lambda self, ctx, ids: {"CVE-2021-44228": {"epss": 0.97, "percentile": 0.99}})
+    monkeypatch.setattr(ExploitRefsModule, "_load_exploitdb_csv",
+                        lambda self, ctx: {"CVE-2021-44228": ["50592"]})
+
+    result = ScanResult(target="x.test")
+    result.add(Finding(category=Category.CVE, title="CVE-2021-44228 — log4j 2.14",
+                       severity=Severity.HIGH,
+                       evidence={"cve_id": "CVE-2021-44228", "product": "log4j",
+                                 "version": "2.14"}))
+    ctx = _make_ctx(state={"_result": result})
+    out = ExploitRefsModule().run(ctx)
+    assert len(out) == 1
+    f = out[0]
+    assert f.category == Category.EXPLOITREF
+    assert f.evidence["kev"] is True
+    assert f.evidence["epss"] == 0.97
+    assert f.evidence["references"]["exploitdb_ids"] == ["50592"]
+    assert "no exploit code" in f.note
+    # KEV => escalated priority
+    assert f.severity is Severity.HIGH
+
+
+def test_pdf_report_generates(tmp_path):
+    pytest.importorskip("reportlab")
+    from allscan import report_pdf
+
+    r = ScanResult(target="pdf.test")
+    r.add(Finding(category=Category.CVE, title="CVE-1 big bad",
+                  severity=Severity.HIGH, location="svc/1.0"))
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    r.meta = {"compliance": [{"id": "x", "name": "CSP", "baseline": "OWASP",
+                              "status": "fail", "detail": "missing"}]}
+    r.finished_at = r.started_at + 2
+    path = report_pdf.save_pdf(r, tmp_path)
+    assert path.exists() and path.suffix == ".pdf"
+    assert path.read_bytes()[:4] == b"%PDF"
 
 
 def test_tui_allscan_runs_all_modules_and_skips_config():

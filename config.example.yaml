@@ -66,5 +66,17 @@ dns_resolvers:
 # Request one free at https://nvd.nist.gov/developers/request-an-api-key
 nvd_api_key: null
 
+# CVE data sources to query (any of: nvd, circl). Results are merged + deduped.
+cve_sources: [nvd, circl]
+
+# Exploit-reference enrichment -----------------------------------------------
+# Optional local ExploitDB checkout CSV to resolve concrete EDB-IDs offline.
+# References/intel only — allscan never downloads, embeds or runs exploit code.
+#   e.g. /opt/exploitdb/files_exploits.csv
+exploitdb_csv: null
+
+# Reporting ------------------------------------------------------------------
+pdf: false                    # also emit a ReportLab PDF (exec summary + risk table)
+
 # Identification ------------------------------------------------------------
 user_agent: "allscan/1.0 (authorized security testing)"

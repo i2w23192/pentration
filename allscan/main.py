@@ -48,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     tgt.add_argument("--domain", help="Target domain (e.g. example.com)")
     tgt.add_argument("--ip", help="Target IP address")
     p.add_argument("target", nargs="?", help="Target domain or IP (positional)")
+    p.add_argument("--targets-file", metavar="FILE",
+                   help="File with one host/IP/CIDR per line; runs the chain per "
+                        "target with per-target reports + an aggregate summary")
 
     p.add_argument(
         "--modules",
@@ -68,6 +71,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wordlist-subdomains", help="Custom subdomain wordlist path")
     p.add_argument("--wordlist-web", help="Custom web path wordlist")
     p.add_argument("--nvd-api-key", help="NVD API key (higher CVE rate limits)")
+    p.add_argument("--cve-source", metavar="SRC",
+                   help="Comma list of CVE sources: nvd,circl (default: nvd,circl)")
+    p.add_argument("--exploitdb-csv", metavar="FILE",
+                   help="Local ExploitDB files_exploits.csv to resolve EDB-ID references")
+    p.add_argument("--pdf", action="store_true",
+                   help="Also write a PDF report (requires reportlab)")
+    # Skip flags — fold into the full chain / Allscan run.
+    skip = p.add_argument_group("skip modules (use with the full chain / --all)")
+    skip.add_argument("--skip", metavar="MODULES",
+                      help="Comma list of modules to skip, e.g. --skip web,active")
+    for _m in MODULE_ORDER:
+        skip.add_argument(f"--skip-{_m}", dest=f"skip_{_m}", action="store_true",
+                          help=f"Skip the {_m} module")
 
     # --- active probing (detection-only) --------------------------------
     active = p.add_argument_group("active probing (detection-only; sends requests)")
@@ -123,10 +139,24 @@ def config_from_args(args) -> Config:
         modules = list(MODULE_ORDER)
     elif args.modules:
         modules = [m.strip() for m in args.modules.split(",") if m.strip()]
+    # resolve the module set, then subtract any --skip / --skip-<module>
+    if modules is None:
+        modules = list(base.modules)
+    skipped: set[str] = set()
+    if getattr(args, "skip", None):
+        skipped |= {m.strip() for m in args.skip.split(",") if m.strip()}
+    for m in MODULE_ORDER:
+        if getattr(args, f"skip_{m}", False):
+            skipped.add(m)
+    if skipped:
+        modules = [m for m in modules if m not in skipped]
+
     scope_allow = ([s.strip() for s in args.scope_allow.split(",") if s.strip()]
                    if getattr(args, "scope_allow", None) else None)
     scope_deny = ([s.strip() for s in args.scope_deny.split(",") if s.strip()]
                   if getattr(args, "scope_deny", None) else None)
+    cve_sources = ([s.strip().lower() for s in args.cve_source.split(",") if s.strip()]
+                   if getattr(args, "cve_source", None) else None)
     return base.apply_overrides(
         threads=args.threads,
         rate_limit=args.rate_limit,
@@ -145,6 +175,9 @@ def config_from_args(args) -> Config:
         allow_production=True if getattr(args, "allow_production", False) else None,
         active_max_concurrency=getattr(args, "active_max_concurrency", None),
         active_stop_after_errors=getattr(args, "active_stop_after_errors", None),
+        cve_sources=cve_sources,
+        exploitdb_csv=getattr(args, "exploitdb_csv", None),
+        pdf=True if getattr(args, "pdf", False) else None,
     )
 
 
@@ -276,6 +309,16 @@ def write_outputs(result: ScanResult, config: Config, json_only: bool) -> list[P
     if not json_only:
         paths.append(report.save_markdown(result, out))
         paths.append(report.save_html(result, out))
+        if getattr(config, "pdf", False):
+            try:
+                from allscan import report_pdf
+
+                paths.append(report_pdf.save_pdf(result, out))
+            except ImportError:
+                print("  (PDF requested but ReportLab is not installed; "
+                      "pip install reportlab)")
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"  (PDF generation failed: {exc})")
     return paths
 
 
@@ -317,6 +360,69 @@ def cmd_list(args) -> int:
     return 0
 
 
+def read_targets_file(path: str, cap: int) -> list[str]:
+    """Parse a targets file: one host/IP/CIDR per line (# comments allowed).
+
+    CIDR lines are expanded to host addresses (bounded by ``cap``). Invalid
+    lines are skipped with a warning.
+    """
+    import ipaddress
+
+    targets: list[str] = []
+    seen: set[str] = set()
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError as exc:
+        print(f"error: could not read targets file: {exc}", file=sys.stderr)
+        sys.exit(2)
+    for raw in lines:
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if "/" in line:  # CIDR
+            try:
+                net = ipaddress.ip_network(line, strict=False)
+            except ValueError:
+                print(f"  ! skipping invalid CIDR: {line}", file=sys.stderr)
+                continue
+            for host in net.hosts():
+                h = str(host)
+                if h not in seen:
+                    seen.add(h)
+                    targets.append(h)
+                if len(targets) >= cap:
+                    break
+            continue
+        ok, norm = validate_target(line)
+        if not ok:
+            print(f"  ! skipping invalid target: {line}", file=sys.stderr)
+            continue
+        if norm not in seen:
+            seen.add(norm)
+            targets.append(norm)
+        if len(targets) >= cap:
+            break
+    return targets[:cap]
+
+
+def run_multi(targets: list[str], config: Config, json_only: bool) -> int:
+    from allscan import report
+
+    print(AUTHORIZATION_NOTICE)
+    print(f"  Multi-target run: {len(targets)} targets\n")
+    results = []
+    for i, tgt in enumerate(targets, start=1):
+        print(f"\n===== [{i}/{len(targets)}] {tgt} =====")
+        result = run_headless(tgt, config)
+        paths = write_outputs(result, config, json_only)
+        print_summary(result, paths)
+        results.append((tgt, result))
+    agg = report.save_aggregate(results, config.output_path())
+    print(f"\nAggregate summary written: {agg}")
+    print(f"  ({agg.with_suffix('.md').name} has the per-target table)")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -332,6 +438,19 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     target = resolve_target(args)
     config = config_from_args(args)
+
+    # Multi-target file mode (headless, scripting) — requires authorization.
+    if getattr(args, "targets_file", None):
+        if not args.i_have_authorization:
+            print(AUTHORIZATION_NOTICE)
+            print("Refusing multi-target run without --i-have-authorization.",
+                  file=sys.stderr)
+            return 3
+        targets = read_targets_file(args.targets_file, config.host_discovery_max)
+        if not targets:
+            print("error: no valid targets in the targets file.", file=sys.stderr)
+            return 2
+        return run_multi(targets, config, args.json_only)
 
     # Decide TUI vs headless.
     want_tui = (target is None) or (not args.no_tui and sys.stdin.isatty()

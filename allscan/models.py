@@ -55,6 +55,7 @@ class Category:
     CLOUD = "cloud"             # exposed buckets, metadata endpoints
     WAF = "waf"                 # WAF/CDN and rate-limit observations
     CVE = "cves"
+    EXPLOITREF = "exploit_refs"  # public exploit REFERENCES + KEV/EPSS (no payloads)
     MISCONFIG = "misconfigs"
     ACTIVE = "active"           # active-probing detections (confirm, not exploit)
     COMPLIANCE = "compliance"   # baseline pass/fail checklist roll-up
@@ -74,6 +75,7 @@ class Category:
         CLOUD,
         WAF,
         CVE,
+        EXPLOITREF,
         MISCONFIG,
         ACTIVE,
         COMPLIANCE,
