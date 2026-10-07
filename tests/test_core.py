@@ -633,6 +633,88 @@ def test_surface_maps_and_flags_third_party():
     assert any("third-party ASNs" in f.title for f in out)
 
 
+# --------------------------------------------------------------------------- #
+# phase 3: more active checks + scanner integrations — offline
+# --------------------------------------------------------------------------- #
+
+
+def test_active_jwt_analysis_flags_alg_none():
+    import base64
+    from allscan.active import ActiveModule
+
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').decode().rstrip("=")
+    token = f"{header}.eyJzdWIiOiIxMjMifQ.sig"
+    state = {"pages": {"https://x.test": {"body": f"var t='{token}'", "headers": {}, "cookies": []}}}
+    ctx = _make_ctx(target="x.test", state=state)
+    out = ActiveModule()._check_jwt(ctx)
+    assert any(f.evidence.get("type") == "jwt-analysis" for f in out)
+    f = out[0]
+    assert f.severity is Severity.HIGH  # alg=none
+    assert any("alg=none" in i for i in f.evidence["issues"])
+
+
+def test_integrations_parse_httpx_and_nuclei():
+    from allscan.integrations import parse_httpx, parse_nuclei
+    from allscan.models import Finding as F
+
+    emit = lambda **kw: F(**{**kw, "module": "integrations"})
+    httpx = '{"url":"https://x.test","status_code":200,"title":"Home","tech":["nginx"]}'
+    fh = parse_httpx(httpx + "\nnot-json\n", emit)
+    assert len(fh) == 1 and fh[0].category == Category.WEB and fh[0].evidence["status"] == 200
+
+    nuclei = ('{"template-id":"CVE-2021-1","info":{"name":"Thing","severity":"high",'
+              '"description":"d","tags":["cve"]},"matched-at":"https://x.test/a"}')
+    fn = parse_nuclei(nuclei, emit)
+    assert len(fn) == 1
+    assert fn[0].severity is Severity.HIGH
+    assert fn[0].note == "manual validation required"
+    assert fn[0].category == Category.ACTIVE
+
+
+def test_integrations_parse_sqlmap_detection_only():
+    from allscan.integrations import parse_sqlmap
+    from allscan.models import Finding as F
+
+    emit = lambda **kw: F(**{**kw, "module": "integrations"})
+    log = "sqlmap ... Parameter 'id' is vulnerable. Do you want to keep testing?"
+    out = parse_sqlmap(log, "http://x.test/p?id=1", emit)
+    assert len(out) == 1
+    assert out[0].severity is Severity.HIGH
+    assert out[0].evidence["phase"] == "detection"
+    assert "no data extraction" in out[0].description.lower()
+    # clean log => nothing
+    assert parse_sqlmap("all tested, not injectable", "http://x/p?id=1", emit) == []
+
+
+def test_integrations_parse_masscan():
+    from allscan.integrations import parse_masscan
+    from allscan.models import Finding as F
+
+    emit = lambda **kw: F(**{**kw, "module": "integrations"})
+    data = '[{"ip":"10.0.0.1","ports":[{"port":22,"proto":"tcp"}]}]'
+    out = parse_masscan(data, emit)
+    assert len(out) == 1 and out[0].evidence["port"] == 22 and out[0].category == Category.PORT
+
+
+def test_integrations_gating(monkeypatch):
+    import allscan.integrations as integ
+    from allscan.integrations import IntegrationsModule
+
+    # unknown tool -> skipped, no crash
+    ctx = _make_ctx()
+    ctx.config.integrations = ["bogus"]
+    out = IntegrationsModule().run(ctx)
+    assert any("Unknown" in (f.description or "") or "bogus" in f.title for f in out) or out == []
+
+    # active tool present on PATH but --active OFF -> skipped with that reason
+    monkeypatch.setattr(integ.shutil, "which", lambda name: "/usr/bin/" + name)
+    ctx2 = _make_ctx()
+    ctx2.config.integrations = ["nuclei"]
+    ctx2.config.active = False
+    out2 = IntegrationsModule().run(ctx2)
+    assert any("requires --active" in (f.description or "") for f in out2)
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""

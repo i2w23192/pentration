@@ -163,6 +163,8 @@ class ActiveModule(Module):
             local += self._check_open_redirect(ctx, guard, actx, url)
             local += self._check_sqli_error(ctx, guard, actx, url)
             local += self._check_dir_listing(ctx, guard, actx, url)
+            local += self._check_cors(ctx, guard, actx, url)
+            local += self._check_host_header(ctx, guard, actx, url)
             return local
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=actx.cap) as ex:
@@ -173,6 +175,10 @@ class ActiveModule(Module):
                 for f in fut.result():
                     with lock:
                         findings.append(ctx.emit(f))
+
+        # token analysis over observed cookies/headers/bodies (no requests)
+        for f in self._check_jwt(ctx):
+            findings.append(f)
 
         if actx.stopped():
             findings.append(
@@ -360,6 +366,131 @@ class ActiveModule(Module):
                             "(confirmed by active request).",
             )]
         return []
+
+    def _check_cors(self, ctx, guard, actx, url) -> list[Finding]:
+        """Reflected-origin CORS misconfig: send an arbitrary Origin and see if
+        it is reflected with credentials allowed. Benign header only."""
+        host = urlparse(url).hostname or ""
+        decision = guard.decide(host)
+        if not decision.allowed:
+            ctx.audit.record("scope_blocked", url, reason=decision.reason)
+            return []
+        if ctx.cancel.cancelled() or actx.stopped():
+            return []
+        evil = "https://allscan-cors.invalid"
+        ctx.rate()
+        ctx.audit.record("active_request", url, check="cors")
+        try:
+            resp = requests.get(url, timeout=ctx.config.timeout,
+                                headers={"User-Agent": ctx.config.user_agent,
+                                         "Origin": evil},
+                                allow_redirects=False, verify=ctx.config.verify_tls)
+            actx.record_ok()
+        except RequestException:
+            actx.record_error()
+            return []
+        acao = resp.headers.get("Access-Control-Allow-Origin", "")
+        acac = resp.headers.get("Access-Control-Allow-Credentials", "").lower()
+        if acao == evil or acao == "*":
+            reflects = acao == evil
+            sev = Severity.HIGH if (reflects and acac == "true") else (
+                Severity.MEDIUM if reflects else Severity.LOW)
+            return [self._finding(
+                "cors-misconfig", url, sev,
+                evidence={"acao": acao, "acac": acac, "sent_origin": evil,
+                          "reflects_arbitrary_origin": reflects},
+                confidence="high" if reflects else "medium",
+                title="Permissive CORS policy" + (" with credentials" if acac == "true" else ""),
+                description="The server reflected an arbitrary Origin in "
+                            "Access-Control-Allow-Origin" +
+                            (" and allows credentials — cross-origin data exposure risk."
+                             if acac == "true" else " (or uses a wildcard)."),
+            )]
+        return []
+
+    def _check_host_header(self, ctx, guard, actx, url) -> list[Finding]:
+        """Host-header injection: send a marker Host and see if it is reflected
+        in the body or a redirect (cache-poisoning / routing indicator)."""
+        host = urlparse(url).hostname or ""
+        decision = guard.decide(host)
+        if not decision.allowed:
+            ctx.audit.record("scope_blocked", url, reason=decision.reason)
+            return []
+        if ctx.cancel.cancelled() or actx.stopped():
+            return []
+        marker = "allscan-hh.invalid"
+        ctx.rate()
+        ctx.audit.record("active_request", url, check="host-header")
+        try:
+            resp = requests.get(url, timeout=ctx.config.timeout,
+                                headers={"User-Agent": ctx.config.user_agent,
+                                         "Host": marker},
+                                allow_redirects=False, verify=ctx.config.verify_tls)
+            actx.record_ok()
+        except RequestException:
+            actx.record_error()
+            return []
+        loc = resp.headers.get("Location", "")
+        body_head = (resp.text or "")[:4000]
+        if marker in loc or marker in body_head:
+            where = "redirect Location" if marker in loc else "response body"
+            return [self._finding(
+                "host-header-injection", url, Severity.MEDIUM,
+                evidence={"marker": marker, "status": resp.status_code,
+                          "reflected_in": where, "location": loc[:200]},
+                confidence="medium",
+                title="Host header reflected (possible host-header injection)",
+                description=f"A spoofed Host header was reflected in the {where} — "
+                            "can enable cache poisoning or password-reset poisoning.",
+            )]
+        return []
+
+    def _check_jwt(self, ctx) -> list[Finding]:
+        """Analyse any JWTs observed in captured cookies/headers/bodies. Decodes
+        (does NOT verify) header/payload and flags weak settings. No requests."""
+        import base64
+        import json as _json
+
+        out: list[Finding] = []
+        seen: set[str] = set()
+        blobs: list[str] = []
+        for base, page in (ctx.state.get("pages") or {}).items():
+            blobs.append(page.get("body") or "")
+            for k, v in (page.get("headers") or {}).items():
+                blobs.append(f"{k}: {v}")
+            for c in page.get("cookies") or []:
+                blobs.append(str(c))
+        jwt_re = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{0,}")
+        for blob in blobs:
+            for m in jwt_re.findall(blob):
+                if m in seen:
+                    continue
+                seen.add(m)
+                try:
+                    h_b64 = m.split(".")[0]
+                    header = _json.loads(base64.urlsafe_b64decode(h_b64 + "==="))
+                except Exception:
+                    continue
+                alg = str(header.get("alg", "")).lower()
+                issues = []
+                if alg == "none":
+                    issues.append("alg=none (signature not verified)")
+                if alg in ("hs256", "hs384", "hs512"):
+                    issues.append(f"symmetric alg {alg} (key-confusion risk if RS expected)")
+                sev = Severity.HIGH if alg == "none" else (
+                    Severity.LOW if issues else Severity.INFO)
+                out.append(self._finding(
+                    "jwt-analysis", "(observed token)", sev,
+                    evidence={"alg": header.get("alg"), "header": header,
+                              "issues": issues, "token_prefix": m[:12] + "…"},
+                    confidence="medium" if issues else "low",
+                    title=f"JWT observed (alg={header.get('alg')})"
+                          + (" — weak settings" if issues else ""),
+                    description="A JSON Web Token was observed and its header decoded "
+                                "(not verified). " + ("; ".join(issues) if issues else
+                                "No obvious header weaknesses."),
+                ))
+        return out
 
     # ------------------------------------------------------------------ #
     def _finding(self, ftype, location, severity, *, evidence, confidence,

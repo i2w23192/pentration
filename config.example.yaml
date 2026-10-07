@@ -28,6 +28,7 @@ modules:
   - tls                # SSL/TLS deep audit: protocol matrix, chain, expiry
   - cloud              # exposed cloud buckets + metadata-endpoint references
   - waf                # WAF/CDN fingerprint + rate-limit observation
+  - integrations       # external scanner wrappers (no-op unless `integrations:` set)
   - active             # active probing (detection-only; no-op unless `active: true`)
   - vulns              # informational CVE correlation + misconfigs
   - exploitrefs        # exploit references + KEV/EPSS enrichment (no payloads)
@@ -50,6 +51,11 @@ active_max_concurrency: 8     # active-only worker cap (also bounded by `threads
 active_max_urls: 25           # cap probed URLs per run
 active_max_params: 6          # cap probed parameters per URL
 active_stop_after_errors: 25  # auto-stop active probing after N consecutive request errors
+
+# External scanner integrations (opt-in; only run if the binary is installed).
+# Passive: subfinder, amass, httpx. Active (also need active: true): nuclei,
+# nikto, sqlmap (detection phase only), masscan. allscan never installs tools.
+integrations: []              # e.g. [subfinder, httpx, nuclei]
 
 # Output --------------------------------------------------------------------
 output_dir: allscan-results   # JSON/MD/HTML reports + audit.log land here

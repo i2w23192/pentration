@@ -35,8 +35,9 @@ DEFAULTS: dict[str, Any] = {
     "modules": [
         "netdiscover", "recon", "dnsx", "whois", "asn", "certs", "email",
         "scan", "web", "fingerprint", "headers", "tls", "cloud", "waf",
-        "active", "vulns", "exploitrefs", "surface", "compliance",
+        "integrations", "active", "vulns", "exploitrefs", "surface", "compliance",
     ],
+    "integrations": [],           # external scanner wrappers to enable (opt-in)
     "host_discovery_cidr": None,   # explicit CIDR for ping sweep; None -> /24 of target
     "host_discovery_max": 256,     # cap hosts swept in one run
     # --- active probing (detection-only; all off by default) ------------
@@ -77,6 +78,7 @@ MODULE_LABELS = {
     "tls": "SSL/TLS Deep Audit",
     "cloud": "Cloud Exposure",
     "waf": "WAF/CDN & Rate-limit Detection",
+    "integrations": "Scanner Integrations",
     "active": "Active Probing (detection)",
     "vulns": "CVE Correlation",
     "exploitrefs": "Exploit-Reference Enrichment",
@@ -116,6 +118,7 @@ class Config:
     active_max_urls: int = DEFAULTS["active_max_urls"]
     active_max_params: int = DEFAULTS["active_max_params"]
     active_stop_after_errors: int = DEFAULTS["active_stop_after_errors"]
+    integrations: list[str] = field(default_factory=lambda: list(DEFAULTS["integrations"]))
 
     # --- construction helpers --------------------------------------------
     @classmethod

@@ -88,6 +88,7 @@ def get_registry() -> dict[str, "Module"]:
     from allscan.tls import TlsModule
     from allscan.cloud import CloudModule
     from allscan.waf import WafModule
+    from allscan.integrations import IntegrationsModule
     from allscan.active import ActiveModule
     from allscan.vulns import VulnsModule
     from allscan.exploitrefs import ExploitRefsModule
@@ -109,6 +110,7 @@ def get_registry() -> dict[str, "Module"]:
         TlsModule(),
         CloudModule(),
         WafModule(),
+        IntegrationsModule(),
         ActiveModule(),
         VulnsModule(),
         ExploitRefsModule(),

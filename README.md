@@ -37,7 +37,8 @@ browse, export (JSON / Markdown / HTML), and diff against previous runs.
 | **SSL/TLS Deep Audit** (`tls`) | Protocol support matrix (SSLv3 / TLS 1.0–1.3 accepted?), full certificate-chain validation against the system trust store, and certificate-expiry warnings. Flags deprecated protocols. |
 | **Cloud Exposure** (`cloud`) | Detects cloud-storage bucket references (S3, Azure Blob, GCS) in subdomains/HTML and classifies each as publicly listable / private / absent with a single bucket-root request (no object access). Flags cloud metadata-endpoint references (SSRF sinks) — reference only, never probed. |
 | **WAF/CDN & Rate-limit Detection** (`waf`) | Fingerprints WAFs/CDNs (Cloudflare, Akamai, CloudFront, Fastly, Sucuri, Imperva, F5, ModSecurity, …) from headers/cookies, and observes rate-limiting (HTTP 429) over a small, bounded request burst. |
-| **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
+| **Active Probing** (`active`) | *Opt-in (`--active`), detection-only.* Sends benign-marker requests to **confirm** weaknesses — reflected input (XSS sink), open redirect, error-based SQL-injection signature, confirmed directory listing, **permissive CORS, host-header reflection**, and **JWT analysis** (decode-only: flags `alg=none`/weak alg) — never to exploit. Scope-enforced, rate-limited, concurrency-capped, with a kill switch and auto-stop. Each finding: `{type, location, severity, evidence, confidence, note:"manual validation required"}`. |
+| **Scanner Integrations** (`integrations`) | *Opt-in (`--integrations …`).* Wraps external tools **if installed** and folds their output into the finding model: `subfinder`/`amass`/`httpx` (passive) and `nuclei`/`nikto`/`sqlmap`/`masscan` (active — also require `--active` and pass the scope guard). `sqlmap` runs its **detection phase only** (`--batch`, no `--dump`/`--os-*`). allscan never installs tools or runs an exploitation mode. |
 | **CVE Correlation** (`vulns`) | Matches detected service/library versions against the **NVD** and **CIRCL CVE Search** APIs (merged + deduped) and lists known CVEs with CVSS severity — *informational listing only, no PoC or exploit code*. Also flags common misconfigs (anonymous FTP, directory listing, sensitive open ports). |
 | **Exploit-Reference Enrichment** (`exploitrefs`) | For each correlated CVE, adds decision-useful **references and risk signals**: CISA **KEV** (exploited-in-the-wild) status, **EPSS** score/percentile, and ExploitDB / Metasploit reference links (plus concrete EDB-IDs when pointed at a local ExploitDB `files_exploits.csv`). *References and intelligence only — no exploit code is downloaded, embedded, or run, and no exploitation is performed.* |
 | **Compliance Checklist** (`compliance`) | Runs last and rolls up all findings into a pass/fail/warn checklist against common baselines (OWASP Secure Headers, basic TLS hygiene, email auth, DNS hygiene, exposure hygiene). Rendered as a dedicated section in the report. |
@@ -144,6 +145,7 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | `--allow-production` | Acknowledge a production target, silence the warning |
 | `--active-max-concurrency N` | Active-only worker cap (default 8) |
 | `--active-stop-after-errors N` | Auto-stop active probing after N consecutive errors |
+| `--integrations t1,t2` | Wrap installed scanners: subfinder,amass,httpx (passive); nuclei,nikto,sqlmap,masscan (active) |
 
 Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
 
@@ -326,6 +328,7 @@ allscan/
 ├── cloud.py           cloud bucket + metadata-endpoint exposure
 ├── waf.py             WAF/CDN fingerprint + rate-limit observation
 ├── scope.py           scope enforcement (allow/deny, out-of-scope blocking)
+├── integrations.py    optional external-scanner wrappers (opt-in; parsers)
 ├── active.py          active probing (detection-only; gated behind --active)
 ├── vulns.py           CVE correlation (NVD + CIRCL)
 ├── exploitrefs.py     exploit REFERENCES + KEV/EPSS enrichment (no payloads)

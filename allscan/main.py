@@ -100,6 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Active-only worker cap (default 8)")
     active.add_argument("--active-stop-after-errors", type=int,
                         help="Auto-stop active probing after N consecutive errors (default 25)")
+    active.add_argument("--integrations", metavar="TOOLS",
+                        help="Comma list of external scanners to wrap if installed: "
+                             "subfinder,amass,httpx (passive), nuclei,nikto,sqlmap,masscan "
+                             "(active — also need --active). Detection phase only.")
 
     p.add_argument(
         "--i-have-authorization",
@@ -157,6 +161,8 @@ def config_from_args(args) -> Config:
                   if getattr(args, "scope_deny", None) else None)
     cve_sources = ([s.strip().lower() for s in args.cve_source.split(",") if s.strip()]
                    if getattr(args, "cve_source", None) else None)
+    integrations = ([s.strip().lower() for s in args.integrations.split(",") if s.strip()]
+                    if getattr(args, "integrations", None) else None)
     return base.apply_overrides(
         threads=args.threads,
         rate_limit=args.rate_limit,
@@ -178,6 +184,7 @@ def config_from_args(args) -> Config:
         cve_sources=cve_sources,
         exploitdb_csv=getattr(args, "exploitdb_csv", None),
         pdf=True if getattr(args, "pdf", False) else None,
+        integrations=integrations,
     )
 
 

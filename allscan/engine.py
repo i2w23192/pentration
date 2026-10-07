@@ -38,6 +38,7 @@ MODULE_ORDER = [
     "tls",           # SSL/TLS deep audit
     "cloud",         # cloud bucket / metadata exposure
     "waf",           # WAF/CDN & rate-limit detection
+    "integrations",  # optional external scanner wrappers (opt-in; active-gated)
     "active",        # active probing (detection-only; gated behind --active)
     "vulns",         # informational CVE correlation + misconfigs
     "exploitrefs",   # exploit REFERENCES + KEV/EPSS enrichment (no payloads)
