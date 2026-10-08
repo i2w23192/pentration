@@ -947,6 +947,34 @@ def test_report_top_risks_section():
     assert "top risks" in report.to_html(r)
 
 
+def test_tui_finished_saves_all_report_formats(tmp_path, monkeypatch):
+    """Regression: the TUI must auto-save MD + HTML (+JSON), not JSON alone."""
+    import asyncio
+    from allscan.tui import AllscanApp, ScanScreen, ResultsScreen
+
+    # stub the engine registry so no network runs
+    import allscan.engine as engine_mod
+    monkeypatch.setattr(engine_mod, "get_registry", lambda: {"recon": StubRecon()})
+
+    async def drive():
+        cfg = Config(modules=["recon"], rate_limit=0, output_dir=str(tmp_path))
+        app = AllscanApp(initial_target="example.test", config=cfg)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.target = "example.test"
+            app.authorized = True
+            app.push_screen(ScanScreen())
+            for _ in range(50):
+                await pilot.pause(0.1)
+                if isinstance(app.screen, ResultsScreen):
+                    break
+            assert isinstance(app.screen, ResultsScreen)
+
+    asyncio.run(drive())
+    exts = {p.suffix for p in tmp_path.glob("allscan_*")}
+    assert ".json" in exts and ".md" in exts and ".html" in exts
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""

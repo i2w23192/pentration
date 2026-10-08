@@ -437,12 +437,16 @@ class ScanScreen(Screen):
 
     def _finished(self, result: ScanResult) -> None:
         self.app.last_result = result  # type: ignore[attr-defined]
-        from allscan import report
-        out = Path(self.app.config.output_dir)  # type: ignore[attr-defined]
+        # Save the full report set (JSON + Markdown + HTML, plus SVG/PDF when
+        # applicable) — the same outputs the CLI writes, not JSON alone.
+        from allscan.main import write_outputs
+        cfg = self.app.config  # type: ignore[attr-defined]
         try:
-            report.save_json(result, out)
+            paths = write_outputs(result, cfg, json_only=False)
+            names = ", ".join(p.name for p in paths)
+            self.notify(f"Saved {len(paths)} report file(s): {names}", timeout=6)
         except Exception as exc:
-            self.notify(f"Could not save JSON: {exc}", severity="error")
+            self.notify(f"Could not save reports: {exc}", severity="error", timeout=8)
         self.app.switch_screen(ResultsScreen(result))
 
     def action_stop(self) -> None:
