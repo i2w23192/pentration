@@ -122,7 +122,7 @@ class CertsModule(Module):
         previous: set = set()
         if path.exists():
             try:
-                previous = set(json.loads(path.read_text()).get("cert_ids", []))
+                previous = set(json.loads(path.read_text(encoding="utf-8")).get("cert_ids", []))
             except Exception:
                 previous = set()
         findings: list[Finding] = []
@@ -151,7 +151,7 @@ class CertsModule(Module):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(
                 {"target": ctx.target, "updated": time.time(),
-                 "cert_ids": sorted(current_ids)}, default=str))
+                 "cert_ids": sorted(current_ids)}, default=str), encoding="utf-8")
         except Exception as exc:
             ctx.log(f"Could not write CT baseline: {exc}")
         return findings

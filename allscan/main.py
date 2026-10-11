@@ -444,7 +444,7 @@ def read_targets_file(path: str, cap: int) -> list[str]:
     targets: list[str] = []
     seen: set[str] = set()
     try:
-        lines = Path(path).read_text().splitlines()
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         print(f"error: could not read targets file: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -543,7 +543,7 @@ def cmd_project(argv: list[str]) -> int:
                 allow=[s.strip() for s in (args.scope_allow or "").split(",") if s.strip()] or None,
                 deny=[s.strip() for s in (args.scope_deny or "").split(",") if s.strip()] or None)
         if args.roe:
-            text = Path(args.roe).read_text() if Path(args.roe).is_file() else args.roe
+            text = Path(args.roe).read_text(encoding="utf-8") if Path(args.roe).is_file() else args.roe
             proj.set_roe(text)
         if args.window_start or args.window_end:
             proj.set_window(args.window_start, args.window_end)
@@ -824,10 +824,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     return 0
 
 
+def _force_utf8_console() -> None:
+    """On Windows the console defaults to a legacy code page (cp1252) that
+    can't encode report glyphs like the down arrow, so printing them raises
+    UnicodeEncodeError. Switch stdout/stderr to UTF-8 where possible."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
 def run_cli(argv: Optional[list[str]] = None) -> int:
     """Entry wrapper that never lets an unexpected exception reach the user as
     a raw traceback. Argparse's own SystemExit (bad flags, --help) passes
     through; Ctrl+C exits cleanly."""
+    _force_utf8_console()
     try:
         return main(argv)
     except KeyboardInterrupt:

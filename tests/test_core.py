@@ -214,6 +214,25 @@ def test_save_and_list_runs(tmp_path: Path):
     assert runs[0].target == "example.test"
 
 
+def test_reports_written_as_utf8_with_unicode_glyphs(tmp_path: Path):
+    # Reports contain non-ASCII glyphs (arrows, box-drawing). On Windows the
+    # default text encoding is cp1252, which can't encode e.g. U+2193 and
+    # would raise UnicodeEncodeError on save. Writers must force UTF-8.
+    r = ScanResult(target="example.test")
+    r.add(Finding(category=Category.HEADER,
+                  title="Trend ↓ → ✔ █",
+                  severity=Severity.HIGH,
+                  description="arrows ↓↑→ box ─│"))
+    r.finished_at = r.started_at + 1
+    jp = report.save_json(r, tmp_path)
+    mp = report.save_markdown(r, tmp_path)
+    hp = report.save_html(r, tmp_path)
+    # Round-trips only succeed if bytes were written and read back as UTF-8.
+    assert "↓" in mp.read_text(encoding="utf-8")
+    assert "↓" in hp.read_text(encoding="utf-8")
+    assert report.load_json(jp).target == "example.test"
+
+
 def test_markdown_and_html_contain_findings():
     r = _sample()
     md = report.to_markdown(r)

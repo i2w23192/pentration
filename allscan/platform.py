@@ -100,7 +100,7 @@ class Project:
     def save(self) -> None:
         self.path.mkdir(parents=True, exist_ok=True)
         (self.path / "project.json").write_text(
-            json.dumps(self.data, indent=2, default=str))
+            json.dumps(self.data, indent=2, default=str), encoding="utf-8")
 
     # --- activity / attribution ------------------------------------------
     def activity(self, action: str, detail: str = "", actor: Optional[str] = None) -> None:
@@ -308,7 +308,7 @@ class ProjectStore:
 
     def load(self, name: str) -> Project:
         path = self._dir(name)
-        data = json.loads((path / "project.json").read_text())
+        data = json.loads((path / "project.json").read_text(encoding="utf-8"))
         return Project(name=data.get("name", name), path=path, data=data)
 
     def list(self) -> list[dict]:
@@ -319,7 +319,7 @@ class ProjectStore:
             pj = d / "project.json"
             if pj.is_file():
                 try:
-                    data = json.loads(pj.read_text())
+                    data = json.loads(pj.read_text(encoding="utf-8"))
                     out.append({"name": data.get("name", d.name),
                                 "client": data.get("client", ""),
                                 "runs": len(data.get("runs", [])),

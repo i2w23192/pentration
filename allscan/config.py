@@ -156,7 +156,7 @@ class Config:
                     "PyYAML is required to read a config file but is not installed."
                 )
             try:
-                loaded = yaml.safe_load(cfg_path.read_text()) or {}
+                loaded = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as exc:
                 raise ValueError(f"Config file {cfg_path} is not valid YAML: {exc}") from exc
             if not isinstance(loaded, dict):
@@ -208,7 +208,7 @@ class Config:
                 cand.mkdir(parents=True, exist_ok=True)
                 # confirm we can actually write here
                 probe = cand / ".allscan_write_test"
-                probe.write_text("")
+                probe.write_text("", encoding="utf-8")
                 probe.unlink()
                 self.output_dir = str(cand)  # persist the working location
                 return cand

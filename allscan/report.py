@@ -49,12 +49,12 @@ def save_json(result: ScanResult, output_dir: Path) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / run_filename(result)
-    path.write_text(json.dumps(result.to_dict(), indent=2, default=str))
+    path.write_text(json.dumps(result.to_dict(), indent=2, default=str), encoding="utf-8")
     return path
 
 
 def load_json(path: Path) -> ScanResult:
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
     return ScanResult.from_dict(data)
 
 
@@ -79,7 +79,7 @@ def list_runs(output_dir: Path) -> list[RunRef]:
         return runs
     for path in output_dir.glob("allscan_*.json"):
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             runs.append(
                 RunRef(
                     path=path,
@@ -221,7 +221,7 @@ def save_markdown(result: ScanResult, output_dir: Path) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / (run_filename(result)[:-5] + ".md")
-    path.write_text(to_markdown(result))
+    path.write_text(to_markdown(result), encoding="utf-8")
     return path
 
 
@@ -299,7 +299,7 @@ def save_svg(result: ScanResult, output_dir: Path) -> Optional[Path]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / (run_filename(result)[:-5] + "_topology.svg")
-    path.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + svg)
+    path.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + svg, encoding="utf-8")
     return path
 
 
@@ -519,7 +519,7 @@ def save_html(result: ScanResult, output_dir: Path) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / (run_filename(result)[:-5] + ".html")
-    path.write_text(to_html(result))
+    path.write_text(to_html(result), encoding="utf-8")
     return path
 
 
@@ -589,7 +589,7 @@ def save_aggregate(results: list, output_dir: Path) -> Path:
         "per_target": rows,
     }
     jpath = output_dir / f"allscan_aggregate_{ts}.json"
-    jpath.write_text(json.dumps(agg, indent=2, default=str))
+    jpath.write_text(json.dumps(agg, indent=2, default=str), encoding="utf-8")
 
     lines = [f"# allscan aggregate summary ({len(results)} targets)", ""]
     lines.append("| Target | Findings | High | Med | Low | Info | Partial |")
@@ -601,7 +601,7 @@ def save_aggregate(results: list, output_dir: Path) -> Path:
                      f"| {c['low']} | {c['info']} | {'yes' if r['partial'] else ''} |")
     lines.append(f"| **Total** | **{agg['total_findings']}** | {totals['high']} "
                  f"| {totals['medium']} | {totals['low']} | {totals['info']} | |")
-    (output_dir / f"allscan_aggregate_{ts}.md").write_text("\n".join(lines))
+    (output_dir / f"allscan_aggregate_{ts}.md").write_text("\n".join(lines), encoding="utf-8")
     return jpath
 
 
