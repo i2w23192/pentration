@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Local ExploitDB files_exploits.csv to resolve EDB-ID references")
     p.add_argument("--pdf", action="store_true",
                    help="Also write a PDF report (requires reportlab)")
+    p.add_argument("--discord-webhook", metavar="URL",
+                   help="Send the JSON + HTML reports to this Discord webhook on completion")
     p.add_argument("--criticality", metavar="BAND",
                    help="Default asset criticality for risk scoring: low|medium|high|critical")
     p.add_argument("--asset-criticality", metavar="MAP",
@@ -207,6 +209,7 @@ def config_from_args(args) -> Config:
         default_criticality=getattr(args, "criticality", None),
         asset_criticality=asset_crit,
         suppress_fingerprints=suppress,
+        discord_webhook=getattr(args, "discord_webhook", None),
     )
 
 
@@ -448,6 +451,10 @@ def run_multi(targets: list[str], config: Config, json_only: bool) -> int:
         result = run_headless(tgt, config)
         paths = write_outputs(result, config, json_only)
         print_summary(result, paths)
+        from allscan import notify
+        _msg = notify.deliver(result, config, paths)
+        if _msg:
+            print(f"  {_msg}")
         results.append((tgt, result))
     agg = report.save_aggregate(results, config.output_path())
     print(f"\nAggregate summary written: {agg}")
@@ -730,6 +737,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     result = run_headless(target, config)
     paths = write_outputs(result, config, args.json_only)
     print_summary(result, paths)
+    from allscan import notify
+    _msg = notify.deliver(result, config, paths)
+    if _msg:
+        print(f"  {_msg}")
     if project is not None:
         info = project.ingest_run(result, run_path=str(paths[0]))
         project.save()

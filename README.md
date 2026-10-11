@@ -148,8 +148,25 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | `--active-max-concurrency N` | Active-only worker cap (default 8) |
 | `--active-stop-after-errors N` | Auto-stop active probing after N consecutive errors |
 | `--integrations t1,t2` | Wrap installed scanners: subfinder,amass,httpx (passive); nuclei,nikto,sqlmap,masscan (active) |
+| `--discord-webhook URL` | Send the JSON + HTML reports to this Discord webhook on completion |
 
 Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
+
+---
+
+## Discord delivery
+
+Have each finished scan's **JSON + HTML** reports posted to a Discord webhook
+(a short summary embed plus the two files attached). Set it in the TUI settings
+screen (the field is masked), via `--discord-webhook`, or in config:
+
+```bash
+allscan example.com --i-have-authorization --all \
+    --discord-webhook "https://discord.com/api/webhooks/<id>/<token>"
+```
+
+The webhook is treated as a secret (never written to the audit log or printed
+back); reports are always saved locally regardless of delivery success.
 
 ---
 
@@ -380,7 +397,8 @@ allscan/
 ├── threatmodel.py     threat-model & compliance roll-up (risk matrix, mappings)
 ├── platform.py        engagement projects: scope/RoE/window/auth, ledger, retest, evidence
 ├── report.py          JSON/Markdown/HTML reporting + diff + aggregate
-└── report_pdf.py      PDF report (ReportLab; exec summary + risk table)
+├── report_pdf.py      PDF report (ReportLab; exec summary + risk table)
+└── notify.py          result delivery (Discord webhook: JSON + HTML)
 tests/                 offline unit tests (no network)
 requirements.txt
 config.example.yaml

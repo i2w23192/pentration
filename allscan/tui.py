@@ -278,6 +278,13 @@ class SettingsScreen(Screen):
                 yield Label("Acknowledge production target", classes="setting-label")
                 yield Switch(value=cfg.allow_production, id="allow-production")
             yield Static("", id="active-warning")
+            yield Rule()
+            yield Static("[b]Delivery[/b] [dim](optional)[/dim]")
+            with Horizontal(classes="setting-row"):
+                yield Label("Discord webhook URL", classes="setting-label")
+                yield Input(value=cfg.discord_webhook or "",
+                            placeholder="https://discord.com/api/webhooks/…",
+                            password=True, id="discord-webhook")
             with Horizontal(id="settings-buttons"):
                 yield Button("← Back", id="back-btn")
                 yield Button("Start scan ▶", variant="success", id="scan-btn")
@@ -310,6 +317,13 @@ class SettingsScreen(Screen):
                            self.query_one("#scope-allow", Input).value.split(",") if s.strip()]
         cfg.scope_deny = [s.strip() for s in
                           self.query_one("#scope-deny", Input).value.split(",") if s.strip()]
+        cfg.discord_webhook = self.query_one("#discord-webhook", Input).value.strip() or None
+        if cfg.discord_webhook:
+            from allscan.notify import looks_like_webhook
+            if not looks_like_webhook(cfg.discord_webhook):
+                self.notify("That doesn't look like a Discord webhook URL — reports "
+                            "will still be saved locally, but delivery may fail.",
+                            severity="warning", timeout=6)
         if cfg.active:
             from allscan.scope import ScopeGuard
 
@@ -441,12 +455,23 @@ class ScanScreen(Screen):
         # applicable) — the same outputs the CLI writes, not JSON alone.
         from allscan.main import write_outputs
         cfg = self.app.config  # type: ignore[attr-defined]
+        paths = []
         try:
             paths = write_outputs(result, cfg, json_only=False)
             names = ", ".join(p.name for p in paths)
             self.notify(f"Saved {len(paths)} report file(s): {names}", timeout=6)
         except Exception as exc:
             self.notify(f"Could not save reports: {exc}", severity="error", timeout=8)
+        # optional Discord delivery (webhook from the settings screen)
+        if getattr(cfg, "discord_webhook", None):
+            try:
+                from allscan import notify
+                msg = notify.deliver(result, cfg, paths)
+                if msg:
+                    ok = not msg.lower().endswith("failed") and "failed" not in msg.lower()
+                    self.notify(msg, severity="information" if ok else "error", timeout=8)
+            except Exception as exc:
+                self.notify(f"Discord delivery error: {exc}", severity="error", timeout=8)
         self.app.switch_screen(ResultsScreen(result))
 
     def action_stop(self) -> None:

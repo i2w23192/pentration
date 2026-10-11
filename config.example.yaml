@@ -100,5 +100,10 @@ pdf: false                    # also emit a ReportLab PDF (exec summary + risk t
 # Engagement projects --------------------------------------------------------
 projects_dir: allscan-projects   # where `allscan project ...` stores engagements
 
+# Delivery -------------------------------------------------------------------
+# Send the JSON + HTML reports to a Discord webhook when a scan finishes.
+# Can also be entered in the TUI settings screen or via --discord-webhook.
+discord_webhook: null            # e.g. https://discord.com/api/webhooks/<id>/<token>
+
 # Identification ------------------------------------------------------------
 user_agent: "allscan/1.0 (authorized security testing)"
