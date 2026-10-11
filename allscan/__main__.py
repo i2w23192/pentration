@@ -1,6 +1,6 @@
 """Enable ``python -m allscan``."""
 
-from allscan.main import main
+from allscan.main import run_cli
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_cli())

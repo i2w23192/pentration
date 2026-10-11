@@ -111,7 +111,11 @@ def main() -> int:
         return 3
 
     # Build config with just the chosen modules (everything else default).
-    config = Config.load()
+    try:
+        config = Config.load()
+    except Exception as exc:
+        print(f"  ! config error: {exc}  (using defaults)")
+        config = Config()
     config.modules = modules
 
     print(f"\n  Starting scan of {target} … (Ctrl+C to stop and save partial results)\n")
