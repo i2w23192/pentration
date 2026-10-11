@@ -110,14 +110,17 @@ def send_discord(webhook_url: str, result: ScanResult, paths: list[Path],
     if not looks_like_webhook(url):
         return False, "that does not look like a Discord webhook URL"
 
+    payload = json.dumps(build_payload(result))
     parts, skipped = _attachments([Path(p) for p in paths])
-    if not parts:
-        return False, "no JSON/HTML report files to attach"
-    multipart = [("payload_json", (None, json.dumps(build_payload(result)),
-                                   "application/json"))] + parts
-    kwargs = {"files": multipart, "timeout": timeout}
+    kwargs = {"timeout": timeout}
     if proxy:
         kwargs["proxies"] = {"http": proxy, "https": proxy}
+    if parts:
+        kwargs["files"] = [("payload_json", (None, payload, "application/json"))] + parts
+    else:
+        # No attachable report (missing, or over Discord's 8 MiB limit) — still
+        # deliver the summary embed so the notification isn't lost.
+        kwargs["data"] = {"payload_json": payload}
     try:
         # Verify TLS against the system CA (Discord is a known host); this is
         # independent of the recon verify_tls setting.
@@ -125,7 +128,7 @@ def send_discord(webhook_url: str, result: ScanResult, paths: list[Path],
     except Exception as exc:
         return False, f"request failed: {exc}"
     if resp.status_code in (200, 204):
-        note = f"sent {len(parts)} file(s)"
+        note = f"sent {len(parts)} file(s)" if parts else "sent summary (no files attached)"
         if skipped:
             note += f"; skipped {', '.join(skipped)}"
         return True, note
@@ -140,6 +143,17 @@ def deliver(result: ScanResult, config, paths: list) -> Optional[str]:
     url = getattr(config, "discord_webhook", None)
     if not url:
         return None
-    ok, msg = send_discord(url, result, [Path(p) for p in paths],
-                           proxy=getattr(config, "proxy", None))
+    paths = [Path(p) for p in (paths or [])]
+    # If the saved reports didn't make it through (save failed, or none are
+    # JSON/HTML), regenerate a JSON + HTML into a temp dir so there's something
+    # to attach.
+    if not any(p.suffix in (".json", ".html") and p.exists() for p in paths):
+        import tempfile
+        from allscan import report
+        try:
+            tmp = Path(tempfile.mkdtemp(prefix="allscan-webhook-"))
+            paths = [report.save_json(result, tmp), report.save_html(result, tmp)]
+        except Exception:
+            paths = []
+    ok, msg = send_discord(url, result, paths, proxy=getattr(config, "proxy", None))
     return ("Discord: " + msg) if ok else ("Discord delivery failed — " + msg)
