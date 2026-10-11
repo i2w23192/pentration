@@ -73,4 +73,5 @@ exe = EXE(
     runtime_tmpdir=None,
     console=True,
     version=str(_version_file) if sys.platform == "win32" else None,
+    icon="packaging/allscan.ico",
 )
