@@ -27,3 +27,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# PyInstaller generated
+packaging/_version_info.txt

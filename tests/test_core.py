@@ -17,7 +17,7 @@ import pytest
 
 import allscan.engine as engine_mod
 from allscan.base import Module
-from allscan.config import Config
+from allscan.config import Config, DEFAULTS
 from allscan.engine import Engine
 from allscan.models import Category, Finding, ScanResult, Severity
 from allscan.utils import (
@@ -237,6 +237,38 @@ def test_diff_added_removed():
 # --------------------------------------------------------------------------- #
 # config
 # --------------------------------------------------------------------------- #
+
+
+def test_config_coerces_bad_numeric_yaml(tmp_path):
+    cfg_file = tmp_path / "c.yaml"
+    cfg_file.write_text('threads: "abc"\nrate_limit: "fast"\ntimeout: xyz\n')
+    cfg = Config.load(str(cfg_file))
+    assert cfg.threads == DEFAULTS["threads"]
+    assert cfg.rate_limit == DEFAULTS["rate_limit"]
+    assert cfg.timeout == DEFAULTS["timeout"]
+
+
+def test_config_malformed_yaml_raises_valueerror(tmp_path):
+    cfg_file = tmp_path / "bad.yaml"
+    cfg_file.write_text("threads: [unclosed\n: : :\n")
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        Config.load(str(cfg_file))
+
+
+def test_run_cli_swallows_unexpected_and_ctrl_c(monkeypatch):
+    import allscan.main as main_mod
+
+    monkeypatch.setattr(main_mod, "main", lambda argv=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert main_mod.run_cli([]) == 1  # no traceback escapes
+
+    monkeypatch.setattr(main_mod, "main", lambda argv=None: (_ for _ in ()).throw(KeyboardInterrupt()))
+    assert main_mod.run_cli([]) == 130
+
+
+def test_cmd_diff_missing_file_returns_2():
+    from allscan.main import main
+    assert main(["diff", "/no/such1.json", "/no/such2.json"]) == 2
 
 
 def test_output_path_falls_back_when_unwritable(tmp_path):

@@ -155,10 +155,14 @@ class Config:
                 raise RuntimeError(
                     "PyYAML is required to read a config file but is not installed."
                 )
-            loaded = yaml.safe_load(cfg_path.read_text()) or {}
+            try:
+                loaded = yaml.safe_load(cfg_path.read_text()) or {}
+            except yaml.YAMLError as exc:
+                raise ValueError(f"Config file {cfg_path} is not valid YAML: {exc}") from exc
             if not isinstance(loaded, dict):
                 raise ValueError(f"Config file {cfg_path} must contain a mapping.")
             data.update({k: v for k, v in loaded.items() if k in DEFAULTS})
+        _coerce(data)
         return cls(**{k: data[k] for k in data if k in _field_names()})
 
     def apply_overrides(self, **overrides) -> "Config":
@@ -219,6 +223,31 @@ class Config:
 
 def _field_names() -> set[str]:
     return {f.name for f in dataclasses.fields(Config)}
+
+
+_INT_FIELDS = ("threads", "host_discovery_max", "max_subdomains_bruteforce",
+               "active_max_concurrency", "active_max_urls", "active_max_params",
+               "active_stop_after_errors")
+_FLOAT_FIELDS = ("rate_limit", "timeout")
+
+
+def _coerce(data: dict) -> None:
+    """Coerce numeric config values (e.g. from YAML strings); fall back to the
+    default on a bad value rather than letting it blow up later."""
+    for key in _INT_FIELDS:
+        try:
+            data[key] = int(data[key])
+        except (TypeError, ValueError):
+            data[key] = DEFAULTS[key]
+    for key in _FLOAT_FIELDS:
+        try:
+            data[key] = float(data[key])
+        except (TypeError, ValueError):
+            data[key] = DEFAULTS[key]
+    if not isinstance(data.get("modules"), list):
+        data["modules"] = list(DEFAULTS["modules"])
+    if not isinstance(data.get("extra_headers"), dict):
+        data["extra_headers"] = {}
 
 
 def _resolve_config_path(path: Optional[str]) -> Optional[Path]:

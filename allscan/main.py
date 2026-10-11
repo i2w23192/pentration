@@ -169,6 +169,10 @@ def config_from_args(args) -> Config:
         modules = list(MODULE_ORDER)
     elif args.modules:
         modules = [m.strip() for m in args.modules.split(",") if m.strip()]
+        unknown = [m for m in modules if m not in MODULE_ORDER]
+        if unknown:
+            print(f"warning: ignoring unknown module(s): {', '.join(unknown)}  "
+                  f"(valid: {', '.join(MODULE_ORDER)})", file=sys.stderr)
     # resolve the module set, then subtract any --skip / --skip-<module>
     if modules is None:
         modules = list(base.modules)
@@ -401,10 +405,17 @@ def print_summary(result: ScanResult, paths: list[Path]) -> None:
 def cmd_diff(args) -> int:
     from allscan import report
 
-    old = report.load_json(Path(args.old))
-    new = report.load_json(Path(args.new))
-    d = report.diff_runs(old, new)
-    print(report.diff_to_markdown(d))
+    for p in (args.old, args.new):
+        if not Path(p).is_file():
+            print(f"error: no such run file: {p}", file=sys.stderr)
+            return 2
+    try:
+        old = report.load_json(Path(args.old))
+        new = report.load_json(Path(args.new))
+    except (ValueError, KeyError, OSError) as exc:
+        print(f"error: could not read run JSON: {exc}", file=sys.stderr)
+        return 2
+    print(report.diff_to_markdown(report.diff_runs(old, new)))
     return 0
 
 
@@ -667,9 +678,16 @@ def cmd_retest(argv: list[str]) -> int:
     if not args.run:
         print("error: provide --run RUN.json (a fresh scan to compare).", file=sys.stderr)
         return 2
+    if not Path(args.run).is_file():
+        print(f"error: no such run file: {args.run}", file=sys.stderr)
+        return 2
     from allscan import report
     proj = store.load(args.name)
-    result = report.load_json(Path(args.run))
+    try:
+        result = report.load_json(Path(args.run))
+    except (ValueError, KeyError, OSError) as exc:
+        print(f"error: could not read run JSON: {exc}", file=sys.stderr)
+        return 2
     rep = proj.retest(result, run_path=args.run)
     proj.save()
     c = rep["counts"]
@@ -727,7 +745,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     target = resolve_target(args)
-    config = config_from_args(args)
+    try:
+        config = config_from_args(args)
+    except (ValueError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     # Engagement project: apply its scope, enforce its window for active work.
     project = None
@@ -802,5 +824,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     return 0
 
 
+def run_cli(argv: Optional[list[str]] = None) -> int:
+    """Entry wrapper that never lets an unexpected exception reach the user as
+    a raw traceback. Argparse's own SystemExit (bad flags, --help) passes
+    through; Ctrl+C exits cleanly."""
+    try:
+        return main(argv)
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    raise SystemExit(run_cli())

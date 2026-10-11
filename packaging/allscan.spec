@@ -1,19 +1,23 @@
 # PyInstaller one-file spec for allscan (console app — it's a Textual TUI).
-# Build:  pyinstaller packaging/allscan.spec   (run from the repo root)
+# Build:  python packaging/build.py   (or: pyinstaller packaging/allscan.spec)
 
+import os
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path.cwd()))
+from PyInstaller.utils.hooks import collect_all
+
+SPEC_DIR = os.path.abspath(SPECPATH)
+ROOT = os.path.dirname(SPEC_DIR)
+sys.path.insert(0, ROOT)
 from allscan import __version__
 
 block_cipher = None
 
 datas = [
-    ("config.example.yaml", "."),
-    ("README.md", "."),
+    (os.path.join(ROOT, "config.example.yaml"), "."),
+    (os.path.join(ROOT, "README.md"), "."),
 ]
-
+binaries = []
 hiddenimports = [
     "allscan.base", "allscan.engine", "allscan.config", "allscan.models",
     "allscan.utils", "allscan.scope", "allscan.report", "allscan.report_pdf",
@@ -26,10 +30,18 @@ hiddenimports = [
     "allscan.surface", "allscan.threatmodel", "allscan.compliance",
 ]
 
+# textual/rich ship CSS and other package data that must be bundled; dns and
+# yaml have submodules PyInstaller can miss.
+for pkg in ("textual", "rich", "dns", "yaml"):
+    d, b, h = collect_all(pkg)
+    datas += d
+    binaries += b
+    hiddenimports += h
+
 a = Analysis(
-    ["packaging/allscan_launcher.py"],
-    pathex=[str(Path.cwd())],
-    binaries=[],
+    [os.path.join(SPEC_DIR, "allscan_launcher.py")],
+    pathex=[ROOT],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -47,7 +59,7 @@ version_info = (
     "  kids=[StringFileInfo([StringTable('040904B0', [\n"
     "    StringStruct('CompanyName', 'i2w23192'),\n"
     "    StringStruct('ProductName', 'allscan'),\n"
-    f"    StringStruct('FileDescription', 'allscan — authorized security recon'),\n"
+    "    StringStruct('FileDescription', 'allscan — authorized security recon'),\n"
     f"    StringStruct('FileVersion', '{__version__}'),\n"
     f"    StringStruct('ProductVersion', '{__version__}'),\n"
     "    StringStruct('InternalName', 'allscan'),\n"
@@ -55,8 +67,9 @@ version_info = (
     "    StringStruct('LegalCopyright', 'Copyright i2w23192'),\n"
     "  ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])"
 )
-_version_file = Path("packaging") / "_version_info.txt"
-_version_file.write_text(version_info, encoding="utf-8")
+_version_file = os.path.join(SPEC_DIR, "_version_info.txt")
+with open(_version_file, "w", encoding="utf-8") as fh:
+    fh.write(version_info)
 
 exe = EXE(
     pyz,
@@ -72,6 +85,6 @@ exe = EXE(
     upx=True,
     runtime_tmpdir=None,
     console=True,
-    version=str(_version_file) if sys.platform == "win32" else None,
-    icon="packaging/allscan.ico",
+    version=_version_file if sys.platform == "win32" else None,
+    icon=os.path.join(SPEC_DIR, "allscan.ico"),
 )
