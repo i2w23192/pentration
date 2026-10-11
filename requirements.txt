@@ -1,7 +1,7 @@
 # allscan runtime dependencies
 rich>=13.7
 textual>=0.58
-requests>=2.31
+requests[socks]>=2.31
 dnspython>=2.4
 PyYAML>=6.0
 # Optional: PDF reports (--pdf). allscan runs fine without it.

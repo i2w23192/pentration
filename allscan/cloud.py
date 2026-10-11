@@ -102,13 +102,10 @@ class CloudModule(Module):
         return found
 
     def _classify_bucket(self, ctx: ModuleContext, provider: str, url: str) -> list[Finding]:
-        ctx.rate()
-        ctx.audit.record("cloud_bucket_probe", url, provider=provider)
         try:
             # single request to the bucket root only; no object listing/download
-            resp = requests.get(url, timeout=ctx.config.timeout,
-                                headers={"User-Agent": ctx.config.user_agent},
-                                allow_redirects=False, verify=ctx.config.verify_tls)
+            resp = ctx.http_get(url, allow_redirects=False,
+                                action="cloud_bucket_probe", provider=provider)
         except RequestException as exc:
             ctx.log(f"Bucket probe failed for {url}: {exc}")
             return []

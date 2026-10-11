@@ -138,12 +138,8 @@ class FingerprintModule(Module):
             headers = page.get("headers") or {}
             blob = "\n".join(f"{k}: {v}" for k, v in headers.items())
             return blob, page.get("body") or ""
-        ctx.rate()
-        ctx.audit.record("http_get", base)
         try:
-            resp = requests.get(base, timeout=ctx.config.timeout,
-                                headers={"User-Agent": ctx.config.user_agent},
-                                verify=ctx.config.verify_tls)
+            resp = ctx.http_get(base)
         except RequestException:
             return None, ""
         blob = "\n".join(f"{k}: {v}" for k, v in resp.headers.items())
@@ -219,12 +215,8 @@ class FingerprintModule(Module):
             if ctx.cancel.cancelled():
                 break
             url = f"{base}/{path}"
-            ctx.rate()
-            ctx.audit.record("http_get", url)
             try:
-                resp = requests.get(url, timeout=ctx.config.timeout,
-                                    headers={"User-Agent": ctx.config.user_agent},
-                                    allow_redirects=False, verify=ctx.config.verify_tls)
+                resp = ctx.http_get(url, allow_redirects=False)
             except RequestException:
                 continue
             if resp.status_code not in (200, 201, 401, 403):

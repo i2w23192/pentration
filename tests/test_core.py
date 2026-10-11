@@ -10,6 +10,7 @@ Run with:  pytest -q
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -236,6 +237,20 @@ def test_diff_added_removed():
 # --------------------------------------------------------------------------- #
 # config
 # --------------------------------------------------------------------------- #
+
+
+def test_output_path_falls_back_when_unwritable(tmp_path):
+    # configured dir is impossible (a path *under a regular file*) -> must not
+    # raise; it falls back to a writable location and remembers it.
+    f = tmp_path / "afile"
+    f.write_text("x")
+    cfg = Config(output_dir=str(f / "cannot" / "here"))
+    out = cfg.output_path()
+    assert out.is_dir()
+    assert cfg.output_dir == str(out)  # remembered for later saves
+    # a normal writable dir is used as-is
+    cfg2 = Config(output_dir=str(tmp_path / "ok"))
+    assert cfg2.output_path() == (tmp_path / "ok")
 
 
 def test_config_overrides_skip_none():
@@ -952,6 +967,69 @@ def test_report_top_risks_section():
 # --------------------------------------------------------------------------- #
 
 
+def test_http_helper_applies_proxy_headers_and_scope_gated_auth(monkeypatch):
+    import allscan.base as base_mod
+    from allscan.scope import ScopeGuard
+
+    captured = {}
+
+    class Resp:
+        status_code = 200
+        text = ""
+        headers: dict = {}
+
+    def fake_request(method, url, **kw):
+        captured["url"] = url
+        captured["kw"] = kw
+        return Resp()
+
+    monkeypatch.setattr(base_mod.requests, "request", fake_request)
+
+    cfg = Config(rate_limit=0, user_agent="UA-X", proxy="http://127.0.0.1:8080",
+                 extra_headers={"X-Bb": "h1"}, cookie="s=1", auth_bearer="TK")
+    ctx = _make_ctx(target="10.0.0.5", state={})
+    ctx.config = cfg
+    ctx.scope = ScopeGuard("10.0.0.5")
+
+    # in-scope host -> UA override + proxy + secrets attached
+    ctx.http_get("http://10.0.0.5/app")
+    h = captured["kw"]["headers"]
+    assert h["User-Agent"] == "UA-X"
+    assert h["X-Bb"] == "h1" and h["Cookie"] == "s=1"
+    assert h["Authorization"] == "Bearer TK"
+    assert captured["kw"]["proxies"] == {"http": "http://127.0.0.1:8080",
+                                         "https": "http://127.0.0.1:8080"}
+
+    # out-of-scope host (crt.sh-style enrichment) -> UA + proxy, NO secrets
+    ctx.http_get("https://crt.sh/?q=x")
+    h2 = captured["kw"]["headers"]
+    assert h2["User-Agent"] == "UA-X"
+    assert "X-Bb" not in h2 and "Cookie" not in h2 and "Authorization" not in h2
+    assert "proxies" in captured["kw"]
+
+
+def test_resource_path_frozen_and_source(monkeypatch):
+    from allscan.utils import resource_path
+
+    # source mode: resolves next to the package root
+    p = resource_path("config.example.yaml")
+    assert p.name == "config.example.yaml" and p.exists()
+
+    # frozen mode: resolves under sys._MEIPASS
+    monkeypatch.setattr(sys, "_MEIPASS", "/tmp/meipass_test", raising=False)
+    fp = resource_path("config.example.yaml")
+    assert str(fp) == str(Path("/tmp/meipass_test") / "config.example.yaml")
+
+
+def test_config_to_audit_dict_masks_secrets():
+    cfg = Config(cookie="s=1", auth_bearer="TK", proxy="http://p",
+                 discord_webhook="https://discord.com/api/webhooks/1/x",
+                 nvd_api_key="KEY")
+    d = cfg.to_audit_dict()
+    for key in ("cookie", "auth_bearer", "proxy", "discord_webhook", "nvd_api_key"):
+        assert d[key] == "***"
+
+
 def test_notify_webhook_validation_and_payload():
     from allscan import notify
 
@@ -960,12 +1038,23 @@ def test_notify_webhook_validation_and_payload():
     assert not notify.looks_like_webhook("https://evil.example.com/api/webhooks/1/x")
     assert not notify.looks_like_webhook("")
 
+    from allscan import __version__
     r = ScanResult(target="x.test")
-    r.add(Finding(category=Category.CVE, title="c", severity=Severity.HIGH))
+    r.modules_run = ["vulns", "headers"]
+    r.add(Finding(category=Category.CVE, title="c", severity=Severity.HIGH, module="vulns"))
     r.finished_at = r.started_at + 1
     payload = notify.build_payload(r)
-    assert "x.test" in payload["content"]
-    assert payload["embeds"][0]["color"] == 0xE5484D  # high => red
+    embed = payload["embeds"][0]
+    assert payload["username"] == "RECON RESULTS"
+    assert embed["title"] == f"All Scan v{__version__}"
+    assert "x.test" in embed["description"]
+    assert embed["color"] == 0xE5484D  # high => red
+    assert embed["footer"]["text"] == "Copyrights to @i2w23192"
+    # one field per module that ran; the vulns module shows its finding
+    names = [f["name"] for f in embed["fields"]]
+    assert len(embed["fields"]) == 2
+    assert any("CVE Correlation" == n for n in names)
+    assert any("1 finding" in f["value"] for f in embed["fields"] if f["name"] == "CVE Correlation")
 
 
 def test_notify_attachments_pick_json_html_and_skip_oversize(tmp_path):

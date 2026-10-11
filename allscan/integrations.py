@@ -56,7 +56,7 @@ class IntegrationsModule(Module):
             ctx.log("No scanner integrations enabled (--integrations). Skipping.")
             return []
 
-        guard = ScopeGuard(
+        guard = ctx.scope or ScopeGuard(
             ctx.target,
             allow=list(getattr(ctx.config, "scope_allow", []) or []),
             deny=list(getattr(ctx.config, "scope_deny", []) or []),

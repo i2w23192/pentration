@@ -150,13 +150,10 @@ class WhoisModule(Module):
     def _rdap_get(self, ctx: ModuleContext, url: str) -> Optional[dict]:
         if requests is None:
             return None
-        ctx.rate()
-        ctx.audit.record("rdap_query", url)
         try:
-            resp = requests.get(url, timeout=ctx.config.timeout + 10,
-                                headers={"User-Agent": ctx.config.user_agent,
-                                         "Accept": "application/rdap+json"},
-                                verify=ctx.config.verify_tls)
+            resp = ctx.http_get(url, timeout=ctx.config.timeout + 10,
+                                headers={"Accept": "application/rdap+json"},
+                                action="rdap_query")
             if resp.status_code != 200:
                 return None
             return resp.json()

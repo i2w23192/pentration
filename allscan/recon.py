@@ -213,14 +213,7 @@ class ReconModule(Module):
             return set()
         url = f"https://crt.sh/?q=%25.{ctx.target}&output=json"
         try:
-            ctx.rate()
-            ctx.audit.record("http_get", url)
-            resp = requests.get(
-                url,
-                timeout=ctx.config.timeout + 10,
-                headers={"User-Agent": ctx.config.user_agent},
-                verify=ctx.config.verify_tls,
-            )
+            resp = ctx.http_get(url, timeout=ctx.config.timeout + 10)
             if resp.status_code != 200 or not resp.text.strip():
                 ctx.log(f"crt.sh returned HTTP {resp.status_code}.")
                 return set()

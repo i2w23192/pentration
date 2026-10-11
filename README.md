@@ -71,6 +71,26 @@ brew install nmap                         # macOS
 Python 3.9+ is required. If `nmap` is absent, allscan automatically uses its
 built-in connect/banner scanner.
 
+### Windows .exe (no Python needed)
+
+Grab `allscan.exe` from the latest release and double-click it — it opens the
+terminal UI straight on the welcome screen. One file, no Python/venv/pip.
+
+`nmap` and the optional scanners (subfinder/nuclei/…) are not bundled; the exe
+uses the built-in scanner when `nmap` is absent and picks up any of those tools
+if they're on PATH. The authorization gate and audit logging work the same as
+from source.
+
+Build it yourself (PyInstaller can't cross-compile, so build on Windows):
+
+```powershell
+pip install -r requirements.txt pyinstaller
+python packaging/build.py          # -> dist/allscan.exe
+```
+
+The release CI job (`.github/workflows/release-windows.yml`) builds the one-file
+exe on `windows-latest` for each tag/release and uploads it as a release asset.
+
 ---
 
 ## Usage
@@ -149,20 +169,47 @@ allscan diff OLD_RUN.json NEW_RUN.json         # diff two saved runs
 | `--active-stop-after-errors N` | Auto-stop active probing after N consecutive errors |
 | `--integrations t1,t2` | Wrap installed scanners: subfinder,amass,httpx (passive); nuclei,nikto,sqlmap,masscan (active) |
 | `--discord-webhook URL` | Send the JSON + HTML reports to this Discord webhook on completion |
+| `--proxy URL` | Route all outbound HTTP through a proxy (http/https/socks5) |
+| `--user-agent STR` | Override the default User-Agent |
+| `--header 'Name: Value'` | Extra request header (repeatable); in-scope hosts only |
+| `--cookie STR` / `--auth-bearer TOKEN` / `--auth-basic user:pass` | Authenticated scanning; in-scope hosts only |
 
 Configuration precedence: built-in defaults → YAML config → CLI flags / TUI.
 
 ---
 
+## Proxy, custom headers & authenticated scanning
+
+All outbound HTTP can be routed through a proxy and carry custom headers / auth,
+applied consistently across every module:
+
+```bash
+# through Burp, with a program header and a session cookie
+allscan app.example.com --i-have-authorization --all --active \
+    --proxy http://127.0.0.1:8080 --header "X-Bug-Bounty: handle" \
+    --cookie "session=…" --scope-allow app.example.com
+```
+
+The User-Agent override and the proxy apply to every request. **Cookies, auth
+(`--auth-bearer` / `--auth-basic`) and custom header values are only ever sent to
+in-scope hosts** (target + `--scope-allow`, minus `--scope-deny`) — never to
+enrichment endpoints like crt.sh, NVD, CIRCL or Discord. These values are
+secrets: they are never written to the audit log. (SOCKS proxies need the
+`requests[socks]` extra, included in `requirements.txt`.)
+
 ## Discord delivery
 
-Have each finished scan's **JSON + HTML** reports posted to a Discord webhook
-(a short summary embed plus the two files attached). Set it in the TUI settings
-screen (the field is masked), via `--discord-webhook`, or in config:
+Have each finished scan's **JSON + HTML** reports posted to a Discord webhook:
+an embed titled `All Scan v<version>` with one field per module (and its finding
+breakdown) and the two report files attached. Set it in the TUI settings screen
+(the field is masked), via `--discord-webhook`, or in config:
 
 ```bash
 allscan example.com --i-have-authorization --all \
     --discord-webhook "https://discord.com/api/webhooks/<id>/<token>"
+
+# verify a webhook independently (sends a sample report):
+allscan test-webhook "https://discord.com/api/webhooks/<id>/<token>"
 ```
 
 The webhook is treated as a secret (never written to the audit log or printed

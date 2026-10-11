@@ -9,11 +9,23 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Iterable, Optional
+
+
+def resource_path(relative: str) -> Path:
+    """Resolve a bundled data file. Under a PyInstaller one-file build the
+    files live in the extraction dir (``sys._MEIPASS``); from source they sit
+    next to the package root."""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return Path(base) / relative
+    return Path(__file__).resolve().parent.parent / relative
 
 
 # --------------------------------------------------------------------------- #
