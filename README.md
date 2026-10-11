@@ -212,6 +212,10 @@ allscan example.com --i-have-authorization --all \
 allscan test-webhook "https://discord.com/api/webhooks/<id>/<token>"
 ```
 
+Delivery is resilient: the summary embed is sent even when a report is missing
+or exceeds Discord's 8 MiB attachment limit (the files are then skipped or
+regenerated), so the notification is never lost.
+
 The webhook is treated as a secret (never written to the audit log or printed
 back); reports are always saved locally regardless of delivery success.
 

@@ -523,7 +523,11 @@ class ScanScreen(Screen):
         if deliver_msg:
             self.notify(deliver_msg, severity="error" if "failed" in deliver_msg.lower()
                         or "error" in deliver_msg.lower() else "information", timeout=8)
-        self.app.switch_screen(ResultsScreen(result, deliver_msg))
+        # keep a save-failure visible on the results screen, not just as a toast
+        status = deliver_msg
+        if saved_msg.startswith("Could not"):
+            status = saved_msg + (f"   |   {deliver_msg}" if deliver_msg else "")
+        self.app.switch_screen(ResultsScreen(result, status))
 
     def action_stop(self) -> None:
         if self.engine and not self._stopped:

@@ -1133,6 +1133,48 @@ def test_notify_deliver_noop_without_webhook():
     assert notify.deliver(ScanResult(target="x.test"), Config(), []) is None
 
 
+def test_notify_send_discord_embed_only_when_no_files(monkeypatch):
+    from allscan import notify
+
+    captured = {}
+
+    class Resp:
+        status_code = 204
+
+    def fake_post(url, **kw):
+        captured["kw"] = kw
+        return Resp()
+
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+    r = ScanResult(target="x.test")
+    # no attachable files -> still sends the summary embed (data, not files)
+    ok, msg = notify.send_discord("https://discord.com/api/webhooks/1/x", r, [])
+    assert ok and "summary" in msg
+    assert "data" in captured["kw"] and "files" not in captured["kw"]
+
+
+def test_notify_deliver_regenerates_reports_when_missing(monkeypatch):
+    from allscan import notify
+
+    captured = {}
+
+    class Resp:
+        status_code = 204
+
+    def fake_post(url, **kw):
+        captured["kw"] = kw
+        return Resp()
+
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+    cfg = Config(discord_webhook="https://discord.com/api/webhooks/1/x")
+    r = ScanResult(target="x.test")
+    r.add(Finding(category=Category.HEADER, title="Missing CSP", severity=Severity.MEDIUM))
+    # paths empty -> deliver regenerates json+html and attaches them
+    msg = notify.deliver(r, cfg, [])
+    assert msg.startswith("Discord:")
+    assert "files" in captured["kw"]
+
+
 def test_tui_finished_saves_all_report_formats(tmp_path, monkeypatch):
     """Regression: the TUI must auto-save MD + HTML (+JSON), not JSON alone."""
     import asyncio
