@@ -63,6 +63,7 @@ DEFAULTS: dict[str, Any] = {
     "suppress_fingerprints": [],  # finding fingerprints to mark as false-positive
     "pdf": False,                 # also emit a ReportLab PDF report
     "projects_dir": "allscan-projects",  # engagement/project store location
+    "discord_webhook": None,      # send JSON+HTML reports to this Discord webhook
     "dns_resolvers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
     "max_subdomains_bruteforce": 2000,
     "follow_redirects": True,
@@ -116,6 +117,7 @@ class Config:
     suppress_fingerprints: list[str] = field(default_factory=lambda: list(DEFAULTS["suppress_fingerprints"]))
     pdf: bool = DEFAULTS["pdf"]
     projects_dir: str = DEFAULTS["projects_dir"]
+    discord_webhook: Optional[str] = DEFAULTS["discord_webhook"]
     dns_resolvers: list[str] = field(default_factory=lambda: list(DEFAULTS["dns_resolvers"]))
     max_subdomains_bruteforce: int = DEFAULTS["max_subdomains_bruteforce"]
     follow_redirects: bool = DEFAULTS["follow_redirects"]

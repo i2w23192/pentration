@@ -947,6 +947,99 @@ def test_report_top_risks_section():
     assert "top risks" in report.to_html(r)
 
 
+# --------------------------------------------------------------------------- #
+# Discord webhook delivery
+# --------------------------------------------------------------------------- #
+
+
+def test_notify_webhook_validation_and_payload():
+    from allscan import notify
+
+    assert notify.looks_like_webhook("https://discord.com/api/webhooks/123/abcDEF-ghi")
+    assert notify.looks_like_webhook("https://ptb.discord.com/api/webhooks/9/xy_z")
+    assert not notify.looks_like_webhook("https://evil.example.com/api/webhooks/1/x")
+    assert not notify.looks_like_webhook("")
+
+    r = ScanResult(target="x.test")
+    r.add(Finding(category=Category.CVE, title="c", severity=Severity.HIGH))
+    r.finished_at = r.started_at + 1
+    payload = notify.build_payload(r)
+    assert "x.test" in payload["content"]
+    assert payload["embeds"][0]["color"] == 0xE5484D  # high => red
+
+
+def test_notify_attachments_pick_json_html_and_skip_oversize(tmp_path):
+    from allscan import notify
+
+    (tmp_path / "r.json").write_text("{}")
+    (tmp_path / "r.html").write_text("<html></html>")
+    (tmp_path / "r.md").write_text("# md")
+    big = tmp_path / "big.html"
+    big.write_bytes(b"x" * (notify.MAX_ATTACH_BYTES + 10))
+    parts, skipped = notify._attachments(
+        [tmp_path / "r.json", tmp_path / "r.html", tmp_path / "r.md", big])
+    names = [p[1][0] for p in parts]
+    assert "r.json" in names and "r.html" in names and "r.md" not in names
+    assert any("big.html" in s for s in skipped)  # oversize skipped
+
+
+def test_notify_send_discord_posts_multipart(monkeypatch, tmp_path):
+    from allscan import notify
+
+    captured = {}
+
+    class Resp:
+        status_code = 204
+
+    def fake_post(url, files=None, timeout=None):
+        captured["url"] = url
+        captured["fields"] = [f[0] for f in files]
+        return Resp()
+
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+    jp = tmp_path / "r.json"; jp.write_text("{}")
+    hp = tmp_path / "r.html"; hp.write_text("<html></html>")
+    r = ScanResult(target="x.test")
+    ok, msg = notify.send_discord("https://discord.com/api/webhooks/1/abc", r, [jp, hp])
+    assert ok and "sent 2" in msg
+    assert "payload_json" in captured["fields"]
+    assert captured["fields"].count("files[0]") == 1 and "files[1]" in captured["fields"]
+
+
+def test_notify_deliver_noop_without_webhook():
+    from allscan import notify
+
+    assert notify.deliver(ScanResult(target="x.test"), Config(), []) is None
+
+
+def test_tui_finished_saves_all_report_formats(tmp_path, monkeypatch):
+    """Regression: the TUI must auto-save MD + HTML (+JSON), not JSON alone."""
+    import asyncio
+    from allscan.tui import AllscanApp, ScanScreen, ResultsScreen
+
+    # stub the engine registry so no network runs
+    import allscan.engine as engine_mod
+    monkeypatch.setattr(engine_mod, "get_registry", lambda: {"recon": StubRecon()})
+
+    async def drive():
+        cfg = Config(modules=["recon"], rate_limit=0, output_dir=str(tmp_path))
+        app = AllscanApp(initial_target="example.test", config=cfg)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.target = "example.test"
+            app.authorized = True
+            app.push_screen(ScanScreen())
+            for _ in range(50):
+                await pilot.pause(0.1)
+                if isinstance(app.screen, ResultsScreen):
+                    break
+            assert isinstance(app.screen, ResultsScreen)
+
+    asyncio.run(drive())
+    exts = {p.suffix for p in tmp_path.glob("allscan_*")}
+    assert ".json" in exts and ".md" in exts and ".html" in exts
+
+
 def test_tui_allscan_runs_all_modules_and_skips_config():
     """Pressing Allscan confirms target+auth once then jumps straight to the
     live scan with every module selected, bypassing checklist + settings."""
