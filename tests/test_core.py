@@ -238,6 +238,20 @@ def test_diff_added_removed():
 # --------------------------------------------------------------------------- #
 
 
+def test_output_path_falls_back_when_unwritable(tmp_path):
+    # configured dir is impossible (a path *under a regular file*) -> must not
+    # raise; it falls back to a writable location and remembers it.
+    f = tmp_path / "afile"
+    f.write_text("x")
+    cfg = Config(output_dir=str(f / "cannot" / "here"))
+    out = cfg.output_path()
+    assert out.is_dir()
+    assert cfg.output_dir == str(out)  # remembered for later saves
+    # a normal writable dir is used as-is
+    cfg2 = Config(output_dir=str(tmp_path / "ok"))
+    assert cfg2.output_path() == (tmp_path / "ok")
+
+
 def test_config_overrides_skip_none():
     cfg = Config()
     out = cfg.apply_overrides(threads=None, rate_limit=99.0)

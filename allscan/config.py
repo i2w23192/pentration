@@ -165,9 +165,34 @@ class Config:
         return dataclasses.asdict(self)
 
     def output_path(self) -> Path:
+        """Return a writable output directory, falling back when the configured
+        one can't be created (e.g. a relative dir under an unwritable CWD such
+        as C:\\Windows\\System32). The resolved path is remembered so every
+        later save uses the same place."""
         p = Path(self.output_dir).expanduser()
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+        candidates = [p]
+        # fall back to the user's home, then the system temp dir
+        name = p.name or "allscan-results"
+        candidates.append(Path.home() / name)
+        import tempfile
+        candidates.append(Path(tempfile.gettempdir()) / name)
+        last_err: Exception | None = None
+        for cand in candidates:
+            try:
+                cand.mkdir(parents=True, exist_ok=True)
+                # confirm we can actually write here
+                probe = cand / ".allscan_write_test"
+                probe.write_text("")
+                probe.unlink()
+                self.output_dir = str(cand)  # persist the working location
+                return cand
+            except (PermissionError, OSError) as exc:
+                last_err = exc
+                continue
+        # nothing worked — re-raise the last error with context
+        raise PermissionError(
+            f"Could not create a writable output directory (tried: "
+            f"{', '.join(str(c) for c in candidates)})") from last_err
 
 
 def _field_names() -> set[str]:

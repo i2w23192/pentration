@@ -426,28 +426,43 @@ class ScanScreen(Screen):
     def start_scan(self) -> None:
         cfg: Config = self.app.config  # type: ignore[attr-defined]
         target: str = self.app.target  # type: ignore[attr-defined]
-        out = cfg.output_path()
-        audit_path = out / "audit.log"
+        try:
+            out = cfg.output_path()
+            audit_path = out / "audit.log"
 
-        def on_status(module, status):
-            self.app.call_from_thread(self._set_status, module, status)
+            def on_status(module, status):
+                self.app.call_from_thread(self._set_status, module, status)
 
-        def on_log(module, message):
-            self.app.call_from_thread(self._log, module, message)
+            def on_log(module, message):
+                self.app.call_from_thread(self._log, module, message)
 
-        def on_finding(finding: Finding):
-            def bump():
-                self._count += 1
-                self._update_counter()
-            self.app.call_from_thread(bump)
+            def on_finding(finding: Finding):
+                def bump():
+                    self._count += 1
+                    self._update_counter()
+                self.app.call_from_thread(bump)
 
-        self.engine = Engine(
-            target, cfg,
-            on_log=on_log, on_finding=on_finding, on_status=on_status,
-            audit_path=audit_path,
-        )
-        result = self.engine.run()
+            self.engine = Engine(
+                target, cfg,
+                on_log=on_log, on_finding=on_finding, on_status=on_status,
+                audit_path=audit_path,
+            )
+            result = self.engine.run()
+        except Exception as exc:
+            # Never let a worker exception crash the whole TUI with a traceback;
+            # surface it and return to the welcome screen.
+            self.app.call_from_thread(self._scan_failed, exc)
+            return
         self.app.call_from_thread(self._finished, result)
+
+    def _scan_failed(self, exc: Exception) -> None:
+        self.notify(f"Scan could not start: {exc}", severity="error", timeout=10)
+        if self.is_mounted:
+            try:
+                self._log("tui", f"ERROR: {exc}")
+            except Exception:
+                pass
+        self.app.switch_screen(WelcomeScreen())
 
     def _finished(self, result: ScanResult) -> None:
         self.app.last_result = result  # type: ignore[attr-defined]
