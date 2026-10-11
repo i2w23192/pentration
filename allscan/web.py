@@ -126,16 +126,8 @@ class WebModule(Module):
 
     # ------------------------------------------------------------------ #
     def _probe(self, ctx: ModuleContext, base: str) -> Optional[dict]:
-        ctx.rate()
-        ctx.audit.record("http_get", base)
         try:
-            resp = requests.get(
-                base,
-                timeout=ctx.config.timeout,
-                headers={"User-Agent": ctx.config.user_agent},
-                allow_redirects=ctx.config.follow_redirects,
-                verify=ctx.config.verify_tls,
-            )
+            resp = ctx.http_get(base)
         except RequestException:
             return None
 
@@ -203,16 +195,8 @@ class WebModule(Module):
             if ctx.cancel.cancelled():
                 return None
             url = base.rstrip("/") + "/" + path
-            ctx.rate()
-            ctx.audit.record("http_get", url)
             try:
-                resp = requests.get(
-                    url,
-                    timeout=ctx.config.timeout,
-                    headers={"User-Agent": ctx.config.user_agent},
-                    allow_redirects=False,
-                    verify=ctx.config.verify_tls,
-                )
+                resp = ctx.http_get(url, allow_redirects=False)
             except RequestException:
                 return None
             if resp.status_code in (200, 201, 203, 204, 301, 302, 401, 403):

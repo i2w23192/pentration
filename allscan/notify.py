@@ -10,11 +10,14 @@ treated as a secret (never written to the audit log or printed back).
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 from pathlib import Path
 from typing import Optional
 
+from allscan import __version__
+from allscan.config import MODULE_LABELS
 from allscan.models import ScanResult, Severity
 
 try:
@@ -35,26 +38,43 @@ def looks_like_webhook(url: str) -> bool:
     return bool(_WEBHOOK_RE.match((url or "").strip()))
 
 
+def _module_fields(result: ScanResult) -> list[dict]:
+    """One embed field per module that ran, with its finding breakdown."""
+    per: dict[str, dict[str, int]] = {}
+    for f in result.findings:
+        sev = per.setdefault(f.module, {"high": 0, "medium": 0, "low": 0, "info": 0})
+        sev[f.severity.value] += 1
+    fields = []
+    for name in result.modules_run[:25]:
+        counts = per.get(name, {"high": 0, "medium": 0, "low": 0, "info": 0})
+        total = sum(counts.values())
+        if total:
+            parts = [f"{counts[s]} {s}" for s in ("high", "medium", "low", "info") if counts[s]]
+            value = f"{total} finding(s) — " + ", ".join(parts)
+        else:
+            value = "no findings"
+        fields.append({"name": MODULE_LABELS.get(name, name), "value": value, "inline": False})
+    return fields
+
+
 def build_payload(result: ScanResult) -> dict:
-    """Build the Discord message payload (summary embed) — pure, no I/O."""
+    """Build the Discord message payload — one field per module. Pure, no I/O."""
     counts = result.counts_by_severity()
     top_sev = next((s for s in ("high", "medium", "low", "info") if counts[s]), "info")
-    fields = [{"name": s.title(), "value": str(counts[s]), "inline": True}
-              for s in ("high", "medium", "low", "info")]
-    title = f"allscan report — {result.target}"
-    if result.partial:
-        title += " (partial)"
+    heading = f"**{result.target}**" + (" (partial)" if result.partial else "")
+    desc = (f"{heading}\n"
+            f"Results of the recon scan for the tool \"All Scan v{__version__}\" — "
+            f"{len(result.findings)} findings across {len(result.modules_run)} module(s) "
+            f"in {result.duration:.1f}s. Detection/report only; manual validation required.")
     return {
-        "username": "allscan",
-        "content": (f"Scan of **{result.target}** complete — "
-                    f"{len(result.findings)} findings in {result.duration:.1f}s"),
+        "username": "RECON RESULTS",
         "embeds": [{
-            "title": title,
-            "description": ("Authorized security testing — detection/report only. "
-                            "Findings require manual validation."),
+            "title": f"All Scan v{__version__}",
+            "description": desc,
             "color": _SEV_COLOR.get(top_sev, 0x4A9EFF),
-            "fields": fields,
-            "footer": {"text": f"modules: {', '.join(result.modules_run) or '—'}"},
+            "fields": _module_fields(result),
+            "footer": {"text": "Copyrights to @i2w23192"},
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }],
     }
 
@@ -80,7 +100,7 @@ def _attachments(paths: list[Path]) -> tuple[list, list[str]]:
 
 
 def send_discord(webhook_url: str, result: ScanResult, paths: list[Path],
-                 *, timeout: float = 15.0) -> tuple[bool, str]:
+                 *, timeout: float = 15.0, proxy: Optional[str] = None) -> tuple[bool, str]:
     """Send the summary + JSON/HTML attachments. Returns (ok, message)."""
     if requests is None:
         return False, "requests not installed"
@@ -95,10 +115,13 @@ def send_discord(webhook_url: str, result: ScanResult, paths: list[Path],
         return False, "no JSON/HTML report files to attach"
     multipart = [("payload_json", (None, json.dumps(build_payload(result)),
                                    "application/json"))] + parts
+    kwargs = {"files": multipart, "timeout": timeout}
+    if proxy:
+        kwargs["proxies"] = {"http": proxy, "https": proxy}
     try:
-        # Verify TLS against the system/proxy CA (Discord is a known host);
-        # this is independent of the recon verify_tls setting.
-        resp = requests.post(url, files=multipart, timeout=timeout)
+        # Verify TLS against the system CA (Discord is a known host); this is
+        # independent of the recon verify_tls setting.
+        resp = requests.post(url, **kwargs)
     except Exception as exc:
         return False, f"request failed: {exc}"
     if resp.status_code in (200, 204):
@@ -117,5 +140,6 @@ def deliver(result: ScanResult, config, paths: list) -> Optional[str]:
     url = getattr(config, "discord_webhook", None)
     if not url:
         return None
-    ok, msg = send_discord(url, result, [Path(p) for p in paths])
+    ok, msg = send_discord(url, result, [Path(p) for p in paths],
+                           proxy=getattr(config, "proxy", None))
     return ("Discord: " + msg) if ok else ("Discord delivery failed — " + msg)

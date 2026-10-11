@@ -90,19 +90,17 @@ class VulnsModule(Module):
                    seen_cves: set) -> list[Finding]:
         keyword = f"{product} {version}".strip()
         params = {"keywordSearch": keyword, "resultsPerPage": 20}
-        headers = {"User-Agent": ctx.config.user_agent}
+        headers = {}
         if ctx.config.nvd_api_key:
             headers["apiKey"] = ctx.config.nvd_api_key
 
-        ctx.rate()
-        ctx.audit.record("nvd_query", keyword)
         try:
-            resp = requests.get(
+            resp = ctx.http_get(
                 NVD_API,
                 params=params,
                 headers=headers,
                 timeout=ctx.config.timeout + 15,
-                verify=ctx.config.verify_tls,
+                action="nvd_query", keyword=keyword,
             )
         except Exception as exc:
             ctx.log(f"NVD query failed for '{keyword}': {exc}")
@@ -162,13 +160,10 @@ class VulnsModule(Module):
         # CIRCL searches by a free-text term; use the product name and filter
         # results to those mentioning the version to keep noise down.
         url = f"{CIRCL_SEARCH}/{product}"
-        ctx.rate()
-        ctx.audit.record("circl_query", f"{product} {version}")
         try:
-            resp = requests.get(
+            resp = ctx.http_get(
                 url, timeout=ctx.config.timeout + 10,
-                headers={"User-Agent": ctx.config.user_agent},
-                verify=ctx.config.verify_tls,
+                action="circl_query", query=f"{product} {version}",
             )
         except Exception as exc:
             ctx.log(f"CIRCL query failed for '{product}': {exc}")

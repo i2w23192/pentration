@@ -54,6 +54,11 @@ DEFAULTS: dict[str, Any] = {
     "wordlist_subdomains": None,  # path; None -> built-in small list
     "wordlist_web": None,         # path; None -> built-in small list
     "user_agent": "allscan/1.0 (authorized security testing)",
+    "proxy": None,                # route all outbound HTTP through this proxy (http/https/socks5)
+    "extra_headers": {},          # custom headers merged into in-scope requests
+    "cookie": None,               # Cookie header for authenticated in-scope requests
+    "auth_bearer": None,          # Authorization: Bearer <token> for in-scope requests
+    "auth_basic": None,           # user:pass -> Authorization: Basic for in-scope requests
     "nvd_api_key": None,          # optional NVD API key for higher rate limits
     "cve_sources": ["nvd", "circl"],  # CVE data sources to query (nvd, circl)
     "exploitdb_csv": None,        # optional local ExploitDB files_exploits.csv for EDB-ID refs
@@ -109,6 +114,11 @@ class Config:
     wordlist_subdomains: Optional[str] = DEFAULTS["wordlist_subdomains"]
     wordlist_web: Optional[str] = DEFAULTS["wordlist_web"]
     user_agent: str = DEFAULTS["user_agent"]
+    proxy: Optional[str] = DEFAULTS["proxy"]
+    extra_headers: dict = field(default_factory=lambda: dict(DEFAULTS["extra_headers"]))
+    cookie: Optional[str] = DEFAULTS["cookie"]
+    auth_bearer: Optional[str] = DEFAULTS["auth_bearer"]
+    auth_basic: Optional[str] = DEFAULTS["auth_basic"]
     nvd_api_key: Optional[str] = DEFAULTS["nvd_api_key"]
     cve_sources: list[str] = field(default_factory=lambda: list(DEFAULTS["cve_sources"]))
     exploitdb_csv: Optional[str] = DEFAULTS["exploitdb_csv"]
@@ -164,6 +174,18 @@ class Config:
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
 
+    #: fields whose values are secrets and must never be logged/printed
+    SECRET_FIELDS = ("proxy", "cookie", "auth_bearer", "auth_basic",
+                     "nvd_api_key", "discord_webhook", "extra_headers")
+
+    def to_audit_dict(self) -> dict[str, Any]:
+        """Config dump with secret values masked, for the audit log."""
+        d = dataclasses.asdict(self)
+        for key in self.SECRET_FIELDS:
+            if d.get(key):
+                d[key] = "***"
+        return d
+
     def output_path(self) -> Path:
         """Return a writable output directory, falling back when the configured
         one can't be created (e.g. a relative dir under an unwritable CWD such
@@ -201,6 +223,9 @@ def _field_names() -> set[str]:
 
 def _resolve_config_path(path: Optional[str]) -> Optional[Path]:
     if path:
+        if path in ("example", "config.example.yaml"):
+            from allscan.utils import resource_path
+            return resource_path("config.example.yaml")
         return Path(path).expanduser()
     for candidate in ("config.yaml", "config.yml"):
         p = Path(candidate)

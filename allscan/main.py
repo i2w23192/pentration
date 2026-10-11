@@ -71,6 +71,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wordlist-subdomains", help="Custom subdomain wordlist path")
     p.add_argument("--wordlist-web", help="Custom web path wordlist")
     p.add_argument("--nvd-api-key", help="NVD API key (higher CVE rate limits)")
+
+    net = p.add_argument_group("outbound HTTP (proxy / headers / auth)")
+    net.add_argument("--proxy", metavar="URL",
+                     help="Route outbound HTTP through a proxy (http/https/socks5), "
+                          "e.g. http://127.0.0.1:8080 or socks5://127.0.0.1:9050")
+    net.add_argument("--user-agent", metavar="STR", help="Override the default User-Agent")
+    net.add_argument("--header", metavar="'Name: Value'", action="append", dest="headers",
+                     help="Extra request header (repeatable); in-scope hosts only")
+    net.add_argument("--cookie", metavar="STR",
+                     help="Cookie header for authenticated scanning (in-scope hosts only)")
+    net.add_argument("--auth-bearer", metavar="TOKEN",
+                     help="Authorization: Bearer token (in-scope hosts only)")
+    net.add_argument("--auth-basic", metavar="user:pass",
+                     help="HTTP Basic credentials (in-scope hosts only)")
     p.add_argument("--cve-source", metavar="SRC",
                    help="Comma list of CVE sources: nvd,circl (default: nvd,circl)")
     p.add_argument("--exploitdb-csv", metavar="FILE",
@@ -184,6 +198,13 @@ def config_from_args(args) -> Config:
                 asset_crit[k.strip()] = v.strip().lower()
     suppress = ([s.strip() for s in args.suppress.split(",") if s.strip()]
                 if getattr(args, "suppress", None) else None)
+    extra_headers = None
+    if getattr(args, "headers", None):
+        extra_headers = {}
+        for h in args.headers:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                extra_headers[k.strip()] = v.strip()
     return base.apply_overrides(
         threads=args.threads,
         rate_limit=args.rate_limit,
@@ -210,6 +231,12 @@ def config_from_args(args) -> Config:
         asset_criticality=asset_crit,
         suppress_fingerprints=suppress,
         discord_webhook=getattr(args, "discord_webhook", None),
+        proxy=getattr(args, "proxy", None),
+        user_agent=getattr(args, "user_agent", None),
+        extra_headers=extra_headers,
+        cookie=getattr(args, "cookie", None),
+        auth_bearer=getattr(args, "auth_bearer", None),
+        auth_basic=getattr(args, "auth_basic", None),
     )
 
 
@@ -652,6 +679,30 @@ def cmd_retest(argv: list[str]) -> int:
     return 0
 
 
+def cmd_test_webhook(argv: list[str]) -> int:
+    import argparse as _a
+    import tempfile
+    from allscan import notify, report
+    from allscan.models import Category, Finding, ScanResult, Severity
+
+    p = _a.ArgumentParser(prog="allscan test-webhook")
+    p.add_argument("url", help="Discord webhook URL")
+    p.add_argument("--proxy")
+    args = p.parse_args(argv)
+
+    r = ScanResult(target="example.test")
+    r.modules_run = ["recon", "headers", "vulns"]
+    r.add(Finding(category=Category.SUBDOMAIN, title="www.example.test", module="recon"))
+    r.add(Finding(category=Category.HEADER, title="Missing CSP",
+                  severity=Severity.MEDIUM, module="headers"))
+    r.finished_at = r.started_at + 1.0
+    out = Path(tempfile.mkdtemp())
+    paths = [report.save_json(r, out), report.save_html(r, out)]
+    ok, msg = notify.send_discord(args.url, r, paths, proxy=args.proxy)
+    print(("OK — " if ok else "FAILED — ") + msg)
+    return 0 if ok else 1
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -669,6 +720,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_findings(argv[1:])
     if argv and argv[0] == "retest":
         return cmd_retest(argv[1:])
+    if argv and argv[0] == "test-webhook":
+        return cmd_test_webhook(argv[1:])
 
     parser = build_parser()
     args = parser.parse_args(argv)

@@ -107,3 +107,12 @@ discord_webhook: null            # e.g. https://discord.com/api/webhooks/<id>/<t
 
 # Identification ------------------------------------------------------------
 user_agent: "allscan/1.0 (authorized security testing)"
+
+# Outbound HTTP (proxy / headers / authenticated scanning) -------------------
+# Cookies, auth and custom header VALUES are only ever sent to in-scope hosts
+# (target + scope_allow, minus scope_deny) — never to enrichment endpoints.
+proxy: null                   # e.g. http://127.0.0.1:8080 (Burp) or socks5://127.0.0.1:9050 (Tor)
+extra_headers: {}             # e.g. {X-Bug-Bounty: handle}
+cookie: null                  # e.g. "session=abc; csrf=def"
+auth_bearer: null             # bearer token (Authorization: Bearer ...)
+auth_basic: null              # user:pass (Authorization: Basic ...)

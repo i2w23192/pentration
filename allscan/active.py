@@ -132,7 +132,7 @@ class ActiveModule(Module):
             ctx.log("requests not installed; active probing unavailable.")
             return []
 
-        guard = ScopeGuard(
+        guard = ctx.scope or ScopeGuard(
             target=ctx.target,
             allow=list(getattr(ctx.config, "scope_allow", []) or []),
             deny=list(getattr(ctx.config, "scope_deny", []) or []),
@@ -208,14 +208,9 @@ class ActiveModule(Module):
             return None
         if ctx.cancel.cancelled() or actx.stopped():
             return None
-        ctx.rate()
-        ctx.audit.record("active_request", url)
         try:
-            resp = requests.get(
-                url, timeout=ctx.config.timeout,
-                headers={"User-Agent": ctx.config.user_agent},
-                allow_redirects=allow_redirects, verify=ctx.config.verify_tls,
-            )
+            resp = ctx.http_get(url, allow_redirects=allow_redirects,
+                                action="active_request")
             actx.record_ok()
             return resp
         except RequestException:
@@ -378,13 +373,9 @@ class ActiveModule(Module):
         if ctx.cancel.cancelled() or actx.stopped():
             return []
         evil = "https://allscan-cors.invalid"
-        ctx.rate()
-        ctx.audit.record("active_request", url, check="cors")
         try:
-            resp = requests.get(url, timeout=ctx.config.timeout,
-                                headers={"User-Agent": ctx.config.user_agent,
-                                         "Origin": evil},
-                                allow_redirects=False, verify=ctx.config.verify_tls)
+            resp = ctx.http_get(url, headers={"Origin": evil}, allow_redirects=False,
+                                action="active_request", check="cors")
             actx.record_ok()
         except RequestException:
             actx.record_error()
@@ -419,13 +410,9 @@ class ActiveModule(Module):
         if ctx.cancel.cancelled() or actx.stopped():
             return []
         marker = "allscan-hh.invalid"
-        ctx.rate()
-        ctx.audit.record("active_request", url, check="host-header")
         try:
-            resp = requests.get(url, timeout=ctx.config.timeout,
-                                headers={"User-Agent": ctx.config.user_agent,
-                                         "Host": marker},
-                                allow_redirects=False, verify=ctx.config.verify_tls)
+            resp = ctx.http_get(url, headers={"Host": marker}, allow_redirects=False,
+                                action="active_request", check="host-header")
             actx.record_ok()
         except RequestException:
             actx.record_error()

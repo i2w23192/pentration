@@ -104,12 +104,8 @@ class CertsModule(Module):
     # ------------------------------------------------------------------ #
     def _fetch_crtsh(self, ctx: ModuleContext) -> list:
         url = CRTSH.format(domain=ctx.target)
-        ctx.rate()
-        ctx.audit.record("crtsh", url)
         try:
-            resp = requests.get(url, timeout=ctx.config.timeout + 20,
-                                headers={"User-Agent": ctx.config.user_agent},
-                                verify=ctx.config.verify_tls)
+            resp = ctx.http_get(url, timeout=ctx.config.timeout + 20, action="crtsh")
             if resp.status_code != 200 or not resp.text.strip():
                 return []
             return resp.json()

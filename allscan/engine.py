@@ -98,8 +98,12 @@ class Engine:
         # roll up every prior finding. Modules only read it.
         shared_state: dict = {"_result": self.result}
 
+        from allscan.scope import ScopeGuard
+        scope_guard = ScopeGuard(self.target, list(self.config.scope_allow),
+                                 list(self.config.scope_deny))
+
         with AuditLog(self.audit_path) as audit:
-            audit.record("scan_start", self.target, config=self.config.to_dict())
+            audit.record("scan_start", self.target, config=self.config.to_audit_dict())
             for name in order:
                 self._status(name, "queued")
 
@@ -116,6 +120,7 @@ class Engine:
                     audit=audit,
                     cancel=self.cancel,
                     state=shared_state,
+                    scope=scope_guard,
                     _log=self._log,
                     _on_finding=self._finding,
                     _module_name=name,

@@ -279,6 +279,25 @@ class SettingsScreen(Screen):
                 yield Switch(value=cfg.allow_production, id="allow-production")
             yield Static("", id="active-warning")
             yield Rule()
+            yield Static("[b]Outbound HTTP[/b] [dim](optional; auth is in-scope only)[/dim]")
+            with Horizontal(classes="setting-row"):
+                yield Label("Proxy URL (http/socks5)", classes="setting-label")
+                yield Input(value=cfg.proxy or "",
+                            placeholder="http://127.0.0.1:8080", id="proxy")
+            with Horizontal(classes="setting-row"):
+                yield Label("User-Agent override", classes="setting-label")
+                yield Input(value=cfg.user_agent, id="user-agent")
+            with Horizontal(classes="setting-row"):
+                yield Label("Extra header (Name: Value)", classes="setting-label")
+                yield Input(value="; ".join(f"{k}: {v}" for k, v in cfg.extra_headers.items()),
+                            placeholder="X-Bug-Bounty: handle", id="extra-header")
+            with Horizontal(classes="setting-row"):
+                yield Label("Cookie", classes="setting-label")
+                yield Input(value=cfg.cookie or "", password=True, id="cookie")
+            with Horizontal(classes="setting-row"):
+                yield Label("Auth bearer token", classes="setting-label")
+                yield Input(value=cfg.auth_bearer or "", password=True, id="auth-bearer")
+            yield Rule()
             yield Static("[b]Delivery[/b] [dim](optional)[/dim]")
             with Horizontal(classes="setting-row"):
                 yield Label("Discord webhook URL", classes="setting-label")
@@ -317,6 +336,16 @@ class SettingsScreen(Screen):
                            self.query_one("#scope-allow", Input).value.split(",") if s.strip()]
         cfg.scope_deny = [s.strip() for s in
                           self.query_one("#scope-deny", Input).value.split(",") if s.strip()]
+        cfg.proxy = self.query_one("#proxy", Input).value.strip() or None
+        cfg.user_agent = self.query_one("#user-agent", Input).value.strip() or cfg.user_agent
+        hdr = self.query_one("#extra-header", Input).value.strip()
+        cfg.extra_headers = {}
+        for part in hdr.split(";"):
+            if ":" in part:
+                k, v = part.split(":", 1)
+                cfg.extra_headers[k.strip()] = v.strip()
+        cfg.cookie = self.query_one("#cookie", Input).value.strip() or None
+        cfg.auth_bearer = self.query_one("#auth-bearer", Input).value.strip() or None
         cfg.discord_webhook = self.query_one("#discord-webhook", Input).value.strip() or None
         if cfg.discord_webhook:
             from allscan.notify import looks_like_webhook
@@ -448,12 +477,33 @@ class ScanScreen(Screen):
                 audit_path=audit_path,
             )
             result = self.engine.run()
+            # Save reports and deliver on the worker thread so blocking network
+            # I/O never freezes the UI event loop.
+            saved_msg, deliver_msg = self._save_and_deliver(cfg, result)
         except Exception as exc:
             # Never let a worker exception crash the whole TUI with a traceback;
             # surface it and return to the welcome screen.
             self.app.call_from_thread(self._scan_failed, exc)
             return
-        self.app.call_from_thread(self._finished, result)
+        self.app.call_from_thread(self._finished, result, saved_msg, deliver_msg)
+
+    def _save_and_deliver(self, cfg, result: ScanResult):
+        from allscan.main import write_outputs
+
+        saved_msg, deliver_msg = "", None
+        try:
+            paths = write_outputs(result, cfg, json_only=False)
+            saved_msg = f"Saved {len(paths)} report file(s): " + ", ".join(p.name for p in paths)
+        except Exception as exc:
+            paths = []
+            saved_msg = f"Could not save reports: {exc}"
+        if getattr(cfg, "discord_webhook", None):
+            try:
+                from allscan import notify
+                deliver_msg = notify.deliver(result, cfg, paths)
+            except Exception as exc:
+                deliver_msg = f"Discord delivery error: {exc}"
+        return saved_msg, deliver_msg
 
     def _scan_failed(self, exc: Exception) -> None:
         self.notify(f"Scan could not start: {exc}", severity="error", timeout=10)
@@ -464,30 +514,16 @@ class ScanScreen(Screen):
                 pass
         self.app.switch_screen(WelcomeScreen())
 
-    def _finished(self, result: ScanResult) -> None:
+    def _finished(self, result: ScanResult, saved_msg: str = "",
+                  deliver_msg: Optional[str] = None) -> None:
         self.app.last_result = result  # type: ignore[attr-defined]
-        # Save the full report set (JSON + Markdown + HTML, plus SVG/PDF when
-        # applicable) — the same outputs the CLI writes, not JSON alone.
-        from allscan.main import write_outputs
-        cfg = self.app.config  # type: ignore[attr-defined]
-        paths = []
-        try:
-            paths = write_outputs(result, cfg, json_only=False)
-            names = ", ".join(p.name for p in paths)
-            self.notify(f"Saved {len(paths)} report file(s): {names}", timeout=6)
-        except Exception as exc:
-            self.notify(f"Could not save reports: {exc}", severity="error", timeout=8)
-        # optional Discord delivery (webhook from the settings screen)
-        if getattr(cfg, "discord_webhook", None):
-            try:
-                from allscan import notify
-                msg = notify.deliver(result, cfg, paths)
-                if msg:
-                    ok = not msg.lower().endswith("failed") and "failed" not in msg.lower()
-                    self.notify(msg, severity="information" if ok else "error", timeout=8)
-            except Exception as exc:
-                self.notify(f"Discord delivery error: {exc}", severity="error", timeout=8)
-        self.app.switch_screen(ResultsScreen(result))
+        if saved_msg:
+            self.notify(saved_msg, severity="information"
+                        if "Could not" not in saved_msg else "error", timeout=6)
+        if deliver_msg:
+            self.notify(deliver_msg, severity="error" if "failed" in deliver_msg.lower()
+                        or "error" in deliver_msg.lower() else "information", timeout=8)
+        self.app.switch_screen(ResultsScreen(result, deliver_msg))
 
     def action_stop(self) -> None:
         if self.engine and not self._stopped:
@@ -512,9 +548,10 @@ class ResultsScreen(Screen):
         Binding("escape", "app.quit", "Quit"),
     ]
 
-    def __init__(self, result: ScanResult) -> None:
+    def __init__(self, result: ScanResult, deliver_msg: Optional[str] = None) -> None:
         super().__init__()
         self.result = result
+        self.deliver_msg = deliver_msg
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -531,6 +568,10 @@ class ResultsScreen(Screen):
                 id="results-title",
             )
             yield Static(summary, id="results-summary")
+            if self.deliver_msg:
+                color = "red" if ("failed" in self.deliver_msg.lower()
+                                  or "error" in self.deliver_msg.lower()) else "green"
+                yield Static(f"[{color}]{self.deliver_msg}[/]", id="deliver-status")
             yield Static("[dim]keys: j=JSON m=Markdown h=HTML r=new scan "
                          "p=past scans esc=quit[/dim]")
             yield DataTable(id="findings-table", zebra_stripes=True, cursor_type="row")

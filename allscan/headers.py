@@ -97,15 +97,8 @@ class HeadersModule(Module):
             return None
         for scheme in ("https", "http"):
             url = f"{scheme}://{ctx.target}"
-            ctx.rate()
-            ctx.audit.record("http_get", url)
             try:
-                resp = requests.get(
-                    url,
-                    timeout=ctx.config.timeout,
-                    headers={"User-Agent": ctx.config.user_agent},
-                    verify=ctx.config.verify_tls,
-                )
+                resp = ctx.http_get(url)
             except Exception:
                 continue
             return {

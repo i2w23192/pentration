@@ -81,12 +81,8 @@ class WafModule(Module):
         # fallback: fetch the root
         for scheme in ("https", "http"):
             url = f"{scheme}://{ctx.target}"
-            ctx.rate()
-            ctx.audit.record("http_get", url)
             try:
-                resp = requests.get(url, timeout=ctx.config.timeout,
-                                    headers={"User-Agent": ctx.config.user_agent},
-                                    verify=ctx.config.verify_tls)
+                resp = ctx.http_get(url)
                 return dict(resp.headers)
             except RequestException:
                 continue
@@ -147,12 +143,8 @@ class WafModule(Module):
         for _ in range(burst):
             if ctx.cancel.cancelled():
                 break
-            ctx.rate()  # still honour the global limiter
-            ctx.audit.record("http_get", url, note="rate-limit-observe")
             try:
-                resp = requests.get(url, timeout=ctx.config.timeout,
-                                    headers={"User-Agent": ctx.config.user_agent},
-                                    verify=ctx.config.verify_tls)
+                resp = ctx.http_get(url, note="rate-limit-observe")
             except RequestException:
                 url = f"http://{ctx.target}"
                 continue
